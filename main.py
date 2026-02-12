@@ -1,110 +1,173 @@
-import os
 import json
+import os
+import random
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Callable, Dict, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from playwright.sync_api import sync_playwright
 from pydantic import BaseModel
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 
 APP = FastAPI(title="Agent Runner")
 
-# === Directorios ===
-DATA_DIR = Path(os.getenv("AGENT_DATA_DIR", "./data")).resolve()
+
+# Home Assistant add-ons siempre montan /data para persistencia.
+DATA_DIR = Path("/data").resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def _load_addon_options() -> Dict[str, Any]:
+    options_path = DATA_DIR / "options.json"
+    if not options_path.exists():
+        return {}
+    try:
+        return json.loads(options_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+ADDON_OPTIONS = _load_addon_options()
+
+
+def _setting(name: str, default: str = "") -> str:
+    env_name = name.upper()
+    if env_name in os.environ:
+        return os.getenv(env_name, default)
+    return str(ADDON_OPTIONS.get(name.lower(), default))
+
+
 # === Seguridad ===
-JOB_SECRET = os.getenv("JOB_SECRET", "")
+JOB_SECRET = _setting("job_secret", "")
 
-# === Webhooks HA ===
-HASS_WEBHOOK_URL_START = os.getenv("HASS_WEBHOOK_URL_START", "")
-HASS_WEBHOOK_URL_END = os.getenv("HASS_WEBHOOK_URL_END", "")
+# === Webhooks HA (usa automatizaciones de HA para Telegram) ===
+HASS_WEBHOOK_URL_STATUS = _setting("hass_webhook_url_status", "")
+HASS_WEBHOOK_URL_FINAL = _setting("hass_webhook_url_final", "")
 
-# === Holded ===
-HOLDED_EMAIL = os.getenv("HOLDED_EMAIL", "")
-HOLDED_PASSWORD = os.getenv("HOLDED_PASSWORD", "")  # opcional
+# === Sitio objetivo ===
+TARGET_URL = _setting("target_url", "")
+SSO_EMAIL = _setting("sso_email", "")
+TIMEZONE = _setting("timezone", "Europe/Madrid")
 
-HOLDED_URL = "https://app.holded.com/myzone"
-HOLDED_URL = "" # REMOVE IT
+
+def _apply_timezone() -> None:
+    os.environ["TZ"] = TIMEZONE
+    if hasattr(time, "tzset"):
+        time.tzset()
+
+
+_apply_timezone()
 
 
 class RunRequest(BaseModel):
     supervision: bool = True
     run_id: Optional[str] = None
-    # para futuro: parámetros por job
     payload: Optional[Dict[str, Any]] = None
+
 
 def _now_id() -> str:
     return time.strftime("%Y%m%d-%H%M%S")
+
 
 def _artifact_dir(job: str, run_id: str) -> Path:
     d = DATA_DIR / "runs" / job / run_id
     d.mkdir(parents=True, exist_ok=True)
     return d
 
-def send_ha_webhook(job_name: str, ok: bool, message: str, meta: dict):
-    if job_name == "holded_click_morning":
-        url = HASS_WEBHOOK_URL_START
-    elif job_name == "holded_click_evening":
-        url = HASS_WEBHOOK_URL_END
-    else:
-        return  # job desconocido
 
+def _sleep_until(target_ts: float):
+    while True:
+        now = time.time()
+        remaining = target_ts - now
+        if remaining <= 0:
+            return
+        time.sleep(min(remaining, 30))
+
+
+def _post_webhook(url: str, payload: Dict[str, Any]):
     if not url:
         return
+    try:
+        httpx.post(url, json=payload, timeout=15)
+    except Exception as err:
+        print(f"[WARN] fallo webhook: {err}")
 
+
+def send_status(job_name: str, run_id: str, step: str, message: str, ok: bool = True, extra: Optional[Dict[str, Any]] = None):
     payload = {
         "ok": ok,
         "job": job_name,
+        "run_id": run_id,
+        "step": step,
         "message": message,
-        "meta": meta,
+        "ts": datetime.now().isoformat(),
+        "meta": extra or {},
     }
+    _post_webhook(HASS_WEBHOOK_URL_STATUS, payload)
 
+
+def send_final(job_name: str, run_id: str, result: Dict[str, Any]):
+    payload = {
+        "ok": result.get("ok", False),
+        "job": job_name,
+        "run_id": run_id,
+        "message": f"[{job_name}] {'OK' if result.get('ok') else 'ERROR'}",
+        "meta": result,
+    }
+    _post_webhook(HASS_WEBHOOK_URL_FINAL, payload)
+
+
+def _today_at(hour: int, minute: int, second: int = 0) -> datetime:
+    now = datetime.now()
+    return now.replace(hour=hour, minute=minute, second=second, microsecond=0)
+
+
+def _click_icon_button(page, icon_label: str, timeout_ms: int = 15_000):
+    selector = f"button:has(svg[aria-label='{icon_label}'])"
+    page.wait_for_selector(selector, timeout=timeout_ms)
+    page.click(selector)
+
+
+def _dismiss_cookie_popup(page):
     try:
-        httpx.post(url, json=payload, timeout=15)
-    except Exception as e:
-        print(f"[WARN] Webhook HA falló: {e}")
+        page.locator("#onetrust-reject-all-handler").first.click(timeout=5_000)
+        return True
+    except Exception:
+        return False
 
-def _guard_auth():
-    if JOB_SECRET:
-        pass
 
-def run_holded_click(job_name: str, supervision: bool, run_id: str) -> Dict[str, Any]:
-    """
-    job_name: holded_click_morning / holded_click_evening
-    supervision:
-      - True: guarda artefactos y corta pronto si algo no cuadra
-      - False: reintenta alguna vez y asume autonomía
-    """
+def _dismiss_location_prompt(page):
+    # Permiso del navegador suele estar denegado por defecto en contexto limpio,
+    # pero intentamos cerrar modales in-page típicos si aparecen.
+    candidates = [
+        "button:has-text('Deny')",
+        "button:has-text('Block')",
+        "button:has-text('No permitir')",
+        "button:has-text('Rechazar')",
+    ]
+    for sel in candidates:
+        try:
+            page.locator(sel).first.click(timeout=1_500)
+            return True
+        except Exception:
+            continue
+    return False
 
+
+def run_workday_flow(job_name: str, supervision: bool, run_id: str) -> Dict[str, Any]:
     run_dir = _artifact_dir(job_name, run_id)
     storage_path = DATA_DIR / "storage" / f"{job_name}.json"
     storage_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # TODO: Ajusta estos selectores cuando me confirmes qué botón es
-    # IMPORTANTE: para la 2ª ejecución (estilo distinto), usa un selector robusto
-    # (por texto, aria-label, data-testid, etc.)
-    BUTTON_SELECTORS = [
-        "button:has-text('...')",         # opción 1 (texto)
-        "[data-testid='...']",            # opción 2 (ideal si existe)
-        "css=button.my-button-class",      # opción 3 (fallback)
-    ]
-
-    # <button class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeLarge css-1aome1q" tabindex="0" type="button"><div class="Icon-root MuiBox-root css-1bj0bvd"><svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeExtraLarge css-zcd73j" focusable="false" aria-hidden="true" viewBox="0 0 448 512" aria-label="Icon-play"><path d="M91.2 36.9c-12.4-6.8-27.4-6.5-39.6 .7S32 57.9 32 72l0 368c0 14.1 7.5 27.2 19.6 34.4s27.2 7.5 39.6 .7l336-184c12.8-7 20.8-20.5 20.8-35.1s-8-28.1-20.8-35.1l-336-184z"></path></svg></div></button>
-
-    # Detectores de error típicos (ajústalos a lo que veas en Holded)
-    ERROR_SELECTORS = [
-        "text=/error/i",
-        "text=/algo ha ido mal/i",
-        "[role='alert']",
-        ".toast--error, .notification--error",
-    ]
+    # Ventanas temporales solicitadas
+    first_start = _today_at(6, 58)
+    first_end = _today_at(8, 31)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)  # si quieres depurar: False
-        context_kwargs = {}
+        browser = p.chromium.launch(headless=True)
+        context_kwargs: Dict[str, Any] = {}
         if storage_path.exists():
             context_kwargs["storage_state"] = str(storage_path)
 
@@ -112,140 +175,143 @@ def run_holded_click(job_name: str, supervision: bool, run_id: str) -> Dict[str,
         page = context.new_page()
 
         def snap(tag: str):
-            # artefactos para depuración
             page.screenshot(path=str(run_dir / f"{tag}.png"), full_page=True)
             (run_dir / f"{tag}.html").write_text(page.content(), encoding="utf-8")
 
         try:
-            page.goto(HOLDED_URL, wait_until="domcontentloaded", timeout=60_000)
+            now = datetime.now()
+            if now > first_end:
+                raise RuntimeError("La ejecución empezó después de las 08:31 para el primer click")
 
-            # 1) Comprobar si ya está logueado
-            # Heurística: si te manda a login/SSO o aparece un input de email
-            url = page.url
-            if "login" in url or "sso" in url:
-                # 2) Login (SSO por email) - aquí hay que afinar según UI real
-                # De momento lo dejamos como esqueleto robusto:
-                # - buscar input de email
-                # - continuar
-                # - completar SSO si aparece pantalla del proveedor
-                # Si no lo ves viable, usamos correo+pass (fallback)
-                try:
-                    # intenta email
-                    page.wait_for_selector("input[type='email'], input[name='email']", timeout=15_000)
-                    email = HOLDED_EMAIL
-                    if not email:
-                        raise RuntimeError("Falta HOLDED_EMAIL en env")
-                    if not email:
-                        raise RuntimeError("Falta HOLDED_EMAIL en env")
-                    page.fill("input[type='email'], input[name='email']", email)
-                    page.keyboard.press("Enter")
-                except PWTimeoutError:
-                    # puede que ya esté en un SSO provider o en otra pantalla
-                    pass
+            random_first = random.uniform(first_start.timestamp(), first_end.timestamp())
+            send_status(job_name, run_id, "scheduled_first", "Primer click (Icon-play) planificado aleatoriamente", extra={"at": datetime.fromtimestamp(random_first).isoformat()})
+            _sleep_until(random_first)
 
-                # En modo supervisado, si no vemos avance claro, paramos con artefactos
-                try:
-                    page.wait_for_load_state("networkidle", timeout=40_000)
-                except PWTimeoutError:
-                    if supervision:
-                        snap("login_timeout")
-                        raise RuntimeError("Timeout esperando carga tras login/SSO")
+            if not TARGET_URL:
+                raise RuntimeError("Falta target_url en la configuración del add-on")
 
-            # 3) Guardar estado de sesión (si ya estás dentro)
-            # (aunque no haya cambiado, no pasa nada)
+            page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=60_000)
+            _dismiss_cookie_popup(page)
+            _dismiss_location_prompt(page)
+
+            # Si está en pantalla de login/SSO, intenta completar email y deja margen a login manual.
+            url = page.url.lower()
+            if "login" in url or "sso" in url or "accounts.google" in url:
+                if SSO_EMAIL:
+                    try:
+                        page.wait_for_selector("input[type='email'], input[name='identifier'], input[name='email']", timeout=15_000)
+                        page.fill("input[type='email'], input[name='identifier'], input[name='email']", SSO_EMAIL)
+                        page.keyboard.press("Enter")
+                    except Exception:
+                        pass
+                if supervision:
+                    snap("sso_required")
+                    raise RuntimeError("Detectado flujo SSO/login. Completa login manual inicial y vuelve a lanzar")
+
             context.storage_state(path=str(storage_path))
 
-            # 4) Acción: pulsar botón y verificar cambio mínimo de UI
-            # Estrategia: antes/después capturar un “estado” (DOM marker, URL, o texto)
-            before_url = page.url
-            before_dom = page.inner_text("body")[:2000]  # heurística simple
+            # 1) Primer botón (Icon-play)
+            _click_icon_button(page, "Icon-play")
+            send_status(job_name, run_id, "first_click", "Pulsado botón de inicio (Icon-play)")
+            snap("first_click")
+            first_click_ts = time.time()
 
-            clicked = False
-            for sel in BUTTON_SELECTORS:
-                try:
-                    page.wait_for_selector(sel, timeout=5_000)
-                    page.click(sel)
-                    clicked = True
-                    break
-                except PWTimeoutError:
-                    continue
+            # 2) Start break: 4h + aleatorio en los siguientes 45 min
+            second_min = first_click_ts + (4 * 3600)
+            second_max = first_click_ts + (4 * 3600) + (45 * 60)
+            second_click_ts = random.uniform(second_min, second_max)
+            send_status(job_name, run_id, "scheduled_start_break", "Start break (Icon-pause) planificado", extra={"at": datetime.fromtimestamp(second_click_ts).isoformat()})
+            _sleep_until(second_click_ts)
+            page.reload(wait_until="domcontentloaded", timeout=60_000)
+            _dismiss_cookie_popup(page)
+            _dismiss_location_prompt(page)
+            _click_icon_button(page, "Icon-pause")
+            send_status(job_name, run_id, "start_break_click", "Pulsado start break (Icon-pause)")
+            snap("start_break_click")
 
-            if not clicked:
-                snap("button_not_found")
-                raise RuntimeError("No se encontró el botón objetivo con los selectores actuales")
+            # 3) Stop break: no exacto 15m, y nunca 16m
+            # Ventana: 14m30s .. 15m59s
+            third_min = time.time() + (14 * 60) + 30
+            third_max = time.time() + (15 * 60) + 59
+            third_click_ts = random.uniform(third_min, third_max)
+            send_status(job_name, run_id, "scheduled_stop_break", "Stop break (Icon-play) planificado", extra={"at": datetime.fromtimestamp(third_click_ts).isoformat()})
+            _sleep_until(third_click_ts)
+            page.reload(wait_until="domcontentloaded", timeout=60_000)
+            _dismiss_cookie_popup(page)
+            _dismiss_location_prompt(page)
+            _click_icon_button(page, "Icon-play")
+            send_status(job_name, run_id, "stop_break_click", "Pulsado stop break (Icon-play)")
+            snap("stop_break_click")
 
-            # Esperar cambio mínimo: load/networkidle o cambio de URL o cambio de DOM
-            # (esto es conservador; lo refinamos cuando sepamos qué cambia)
-            try:
-                page.wait_for_timeout(1500)
-                page.wait_for_load_state("networkidle", timeout=25_000)
-            except PWTimeoutError:
-                # no siempre habrá networkidle; seguimos con comprobación heurística
-                pass
+            # 4) Final (Icon-stop): aleatorio pero <= 7h45 desde el primero
+            final_latest = first_click_ts + (7 * 3600) + (45 * 60)
+            final_earliest = first_click_ts + (7 * 3600)
+            final_ts = random.uniform(final_earliest, final_latest)
+            send_status(job_name, run_id, "scheduled_final", "Click final (Icon-stop) planificado", extra={"at": datetime.fromtimestamp(final_ts).isoformat()})
+            _sleep_until(final_ts)
+            page.reload(wait_until="domcontentloaded", timeout=60_000)
+            _dismiss_cookie_popup(page)
+            _dismiss_location_prompt(page)
+            _click_icon_button(page, "Icon-stop")
+            send_status(job_name, run_id, "final_click", "Pulsado fin de jornada (Icon-stop)")
+            snap("final_click")
 
-            after_url = page.url
-            after_dom = page.inner_text("body")[:2000]
+            result = {
+                "ok": True,
+                "job": job_name,
+                "run_id": run_id,
+                "url": page.url,
+                "data_dir": str(DATA_DIR),
+            }
+            send_final(job_name, run_id, result)
+            return result
 
-            # 5) Detectar mensajes de error
-            for es in ERROR_SELECTORS:
-                try:
-                    loc = page.locator(es).first
-                    if loc.count() > 0 and loc.is_visible():
-                        snap("error_detected")
-                        raise RuntimeError(f"Detectado posible error en UI: selector {es}")
-                except Exception:
-                    pass
-            changed = (after_url != before_url) or (after_dom != before_dom)
-            if not changed:
-                # cambio mínimo no observado: en supervisión lo tratamos como fallo
-                if supervision:
-                    snap("no_ui_change")
-                    raise RuntimeError("No se observó cambio mínimo de UI tras pulsar el botón")
-
-            # OK
-            snap("ok")  # útil para auditoría
-            return {"ok": True, "job": job_name, "run_id": run_id, "url": page.url}
-
-        except Exception as e:
-            # artefacto final
+        except Exception as err:
             try:
                 snap("failed")
             except Exception:
                 pass
-            return {"ok": False, "job": job_name, "run_id": run_id, "error": str(e), "url": page.url}
+            result = {
+                "ok": False,
+                "job": job_name,
+                "run_id": run_id,
+                "error": str(err),
+                "url": page.url if "page" in locals() else "",
+            }
+            send_status(job_name, run_id, "error", f"Error en ejecución: {err}", ok=False)
+            send_final(job_name, run_id, result)
+            return result
 
         finally:
             context.close()
             browser.close()
 
+
+RunnerFn = Callable[[str, bool, str], Dict[str, Any]]
+JOB_RUNNERS: Dict[str, RunnerFn] = {
+    "workday_flow": run_workday_flow,
+}
+
+
 @APP.post("/run/{job_name}")
 def run_job(job_name: str, req: RunRequest):
-
     if JOB_SECRET:
         provided = (req.payload or {}).get("secret", "")
         if provided != JOB_SECRET:
             raise HTTPException(status_code=401, detail="Unauthorized")
 
+    runner = JOB_RUNNERS.get(job_name)
+    if not runner:
+        raise HTTPException(status_code=404, detail=f"Unknown job: {job_name}")
+
     run_id = req.run_id or _now_id()
+    return runner(job_name=job_name, supervision=req.supervision, run_id=run_id)
 
-    result = run_holded_click(
-        job_name=job_name,
-        supervision=req.supervision,
-        run_id=run_id
-    )
 
-    msg = f"[{job_name}] {'OK' if result['ok'] else 'ERROR'} (run {run_id})"
-    if not result["ok"]:
-        msg += f" → {result.get('error', '')}"
+@APP.get("/jobs")
+def list_jobs():
+    return {"jobs": sorted(JOB_RUNNERS.keys())}
 
-    send_ha_webhook(
-        job_name=job_name,
-        ok=result["ok"],
-        message=msg,
-        meta=result
-    )
-
-    return result
 
 @APP.get("/health")
 def health():
@@ -253,7 +319,9 @@ def health():
         "ok": True,
         "data_dir": str(DATA_DIR),
         "has_job_secret": bool(JOB_SECRET),
-        "has_webhook_start": bool(HASS_WEBHOOK_URL_START),
-        "has_webhook_end": bool(HASS_WEBHOOK_URL_END),
-        "holded_email_set": bool(HOLDED_EMAIL),
+        "has_webhook_status": bool(HASS_WEBHOOK_URL_STATUS),
+        "has_webhook_final": bool(HASS_WEBHOOK_URL_FINAL),
+        "has_sso_email": bool(SSO_EMAIL),
+        "timezone": TIMEZONE,
+        "jobs": sorted(JOB_RUNNERS.keys()),
     }
