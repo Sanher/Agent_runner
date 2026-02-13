@@ -1,21 +1,36 @@
-# Agent Runner (Home Assistant add-on)
+# Agent Runner
 
-Este repositorio está preparado para ejecutarse como add-on de Home Assistant.
+Servicio Python (FastAPI + Playwright) para ejecutar automatizaciones web y exponerlas por API HTTP.
 
-## Variables desde configuración del add-on
+Este repositorio contiene **la app**. El empaquetado como add-on de Home Assistant vive en:
 
-Se inyectan a través de `options`/`schema` en `config.yaml`:
+- `https://github.com/Sanher/sanher-ha-addons`
+- carpeta del add-on: `agent_runner`
 
-- `job_secret`
-- `hass_webhook_url_status` (feedback por paso; útil para Telegram vía automatización HA)
-- `hass_webhook_url_final` (resultado final)
-- `sso_email`
-- `target_url`
-- `timezone` (zona horaria para calcular ventanas, p.ej. `Europe/Madrid`)
+## Requisitos
 
-El directorio persistente siempre es `/data`.
+- Python 3.11+
+- Dependencias en `requirements.txt`
 
-Las ventanas horarias se calculan **dentro del contenedor** usando la hora local del servidor/add-on (configurable con `timezone`), por lo que no hacen falta llamadas externas para calcular horarios.
+## Configuracion
+
+La app admite configuracion por variables de entorno y, cuando corre dentro del add-on, tambien lee `/data/options.json`.
+
+Variables relevantes:
+
+- `JOB_SECRET`
+- `HASS_WEBHOOK_URL_STATUS`
+- `HASS_WEBHOOK_URL_FINAL`
+- `SSO_EMAIL`
+- `TARGET_URL`
+- `TIMEZONE` (por defecto `Europe/Madrid`)
+
+## Ejecucion local
+
+```bash
+pip install -r requirements.txt
+uvicorn main:APP --host 0.0.0.0 --port 8099
+```
 
 ## Endpoints
 
@@ -23,10 +38,12 @@ Las ventanas horarias se calculan **dentro del contenedor** usando la hora local
 - `GET /jobs`
 - `POST /run/{job_name}`
 
-## Flujo incluido
+## Persistencia
 
-- `workday_flow`:
-  - primer click (`Icon-play`) aleatorio entre 06:58 y 08:31,
-  - segundo click (`Icon-pause`) tras 4h + ventana aleatoria de 45m,
-  - tercer click (`Icon-play`) entre 14m30s y 15m59s después,
-  - último click (`Icon-stop`) aleatorio entre 7h y 7h45 desde el primero.
+- En add-on de Home Assistant: `/data`
+- Local: depende de permisos/ruta montada para `/data`
+
+## Notas
+
+- El flujo `workday_flow` utiliza ventanas horarias locales segun `TIMEZONE`.
+- Los artefactos (capturas/html) se guardan por `run_id` en el arbol de `runs`.
