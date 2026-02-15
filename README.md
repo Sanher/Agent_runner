@@ -109,7 +109,15 @@ Notas:
 - `POST /email-agent/suggestions/{suggestion_id}/regenerate`
 - `POST /email-agent/suggestions/{suggestion_id}/status`
 - `POST /email-agent/suggestions/manual`
+- `GET /email-agent/settings`
+- `POST /email-agent/settings`
 - `GET /email-agent/ui`
+
+Seguridad:
+
+- Si `JOB_SECRET` está definido, los endpoints de `email_agent` exigen secreto.
+- Se puede enviar en header `X-Job-Secret` o en query string `?secret=...`.
+- Para UI por navegador: `GET /email-agent/ui?secret=...`
 
 ## Flujo correo recomendado
 

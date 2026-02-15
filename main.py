@@ -319,7 +319,7 @@ def _on_startup() -> None:
 
 
 APP.include_router(create_workday_router(workday_service, JOB_SECRET, _workday_missing_required_config))
-APP.include_router(create_email_router(email_service, _email_missing_required_config))
+APP.include_router(create_email_router(email_service, JOB_SECRET, _email_missing_required_config))
 
 
 @APP.get("/")

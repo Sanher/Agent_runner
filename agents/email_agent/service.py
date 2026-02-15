@@ -336,46 +336,65 @@ class EmailAgentService:
                 mailbox=mailbox,
                 allowed_whitelist=active_whitelist,
             ):
-                if msg["id"] in known_ids:
-                    continue
+                try:
+                    if msg["id"] in known_ids:
+                        continue
 
-                sender_email = self._extract_email_address(msg.get("from", ""))
-                if active_whitelist and sender_email not in active_whitelist:
-                    self._debug(
-                        "Correo ignorado por remitente",
-                        email_id=msg.get("id", ""),
-                        from_email=sender_email,
+                    sender_email = self._extract_email_address(msg.get("from", ""))
+                    if active_whitelist and sender_email not in active_whitelist:
+                        self._debug(
+                            "Correo ignorado por remitente",
+                            email_id=msg.get("id", ""),
+                            from_email=sender_email,
+                        )
+                        continue
+
+                    draft = self._generate_draft(msg, config)
+                    suggestion = {
+                        "suggestion_id": f"s-{msg['id']}-{int(datetime.now().timestamp())}",
+                        "email_id": msg["id"],
+                        "from": msg["from"],
+                        "subject": msg["subject"],
+                        "date": msg["date"],
+                        "original_body": msg["body"],
+                        "suggested_reply": draft,
+                        "status": "draft",
+                        "created_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now().isoformat(),
+                    }
+                    known.append(suggestion)
+                    known_ids.add(msg["id"])
+                    created.append(suggestion)
+                    # Persistencia incremental para no perder sugerencias ya creadas
+                    # si falla un correo posterior del lote.
+                    self.save_suggestions(known)
+                    self._debug("Sugerencia creada", suggestion_id=suggestion["suggestion_id"], email_id=msg["id"])
+
+                    try:
+                        self.append_memory(
+                            {
+                                "ts": datetime.now().isoformat(),
+                                "subject": msg["subject"],
+                                "from": msg["from"],
+                                "suggested_reply": draft,
+                            }
+                        )
+                    except Exception:
+                        logger.exception(
+                            "[%s] No se pudo guardar memoria de sugerencia | hora_texto=%s",
+                            AGENT_NAME,
+                            self._now_text(),
+                        )
+                    self._notify_new_suggestion(suggestion)
+                except Exception:
+                    logger.exception(
+                        "[%s] Error procesando email individual | hora_texto=%s | email_id=%s",
+                        AGENT_NAME,
+                        self._now_text(),
+                        msg.get("id", ""),
                     )
                     continue
 
-                draft = self._generate_draft(msg, config)
-                suggestion = {
-                    "suggestion_id": f"s-{msg['id']}-{int(datetime.now().timestamp())}",
-                    "email_id": msg["id"],
-                    "from": msg["from"],
-                    "subject": msg["subject"],
-                    "date": msg["date"],
-                    "original_body": msg["body"],
-                    "suggested_reply": draft,
-                    "status": "draft",
-                    "created_at": datetime.now().isoformat(),
-                    "updated_at": datetime.now().isoformat(),
-                }
-                known.append(suggestion)
-                created.append(suggestion)
-                self._debug("Sugerencia creada", suggestion_id=suggestion["suggestion_id"], email_id=msg["id"])
-
-                self.append_memory(
-                    {
-                        "ts": datetime.now().isoformat(),
-                        "subject": msg["subject"],
-                        "from": msg["from"],
-                        "suggested_reply": draft,
-                    }
-                )
-                self._notify_new_suggestion(suggestion)
-
-            self.save_suggestions(known)
             self._debug("Detección finalizada", created=len(created), total_guardadas=len(known))
             return created
         finally:

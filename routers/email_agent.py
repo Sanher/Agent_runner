@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Callable, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -34,6 +34,7 @@ class EmailSettingsRequest(BaseModel):
 
 def create_email_router(
     service: EmailAgentService,
+    job_secret: str,
     missing_config_fn: Callable[[], List[str]],
 ) -> APIRouter:
     """Crea router HTTP y UI para revisión manual de respuestas de email."""
@@ -47,9 +48,20 @@ def create_email_router(
                 detail=f"Email config inválida. Faltan: {', '.join(sorted(missing))}",
             )
 
+    def ensure_auth(request: Request) -> None:
+        if not job_secret:
+            return
+        provided = (
+            request.headers.get("x-job-secret", "").strip()
+            or request.query_params.get("secret", "").strip()
+        )
+        if provided != job_secret:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
     @router.post("/check-new")
-    def check_new(req: CheckNewRequest):
+    def check_new(req: CheckNewRequest, request: Request):
         """Detecta nuevos correos y genera sugerencias (sin enviar email)."""
+        ensure_auth(request)
         ensure_config()
         created = service.check_new_and_suggest(
             max_emails=max(1, min(req.max_emails, 20)),
@@ -64,16 +76,18 @@ def create_email_router(
         }
 
     @router.get("/suggestions")
-    def list_suggestions(status: Optional[str] = None):
+    def list_suggestions(request: Request, status: Optional[str] = None):
         """Devuelve sugerencias almacenadas opcionalmente filtradas por estado."""
+        ensure_auth(request)
         items = service.load_suggestions()
         if status:
             items = [item for item in items if item.get("status") == status]
         return {"ok": True, "count": len(items), "items": items}
 
     @router.post("/suggestions/{suggestion_id}/regenerate")
-    def regenerate(suggestion_id: str, req: RegenerateRequest):
+    def regenerate(suggestion_id: str, req: RegenerateRequest, request: Request):
         """Regenera una sugerencia aplicando instrucciones del usuario."""
+        ensure_auth(request)
         ensure_config()
         try:
             item = service.regenerate_suggestion(suggestion_id, req.instruction)
@@ -82,8 +96,9 @@ def create_email_router(
             raise HTTPException(status_code=404, detail=str(err)) from err
 
     @router.post("/suggestions/{suggestion_id}/status")
-    def mark_status(suggestion_id: str, req: MarkStatusRequest):
+    def mark_status(suggestion_id: str, req: MarkStatusRequest, request: Request):
         """Actualiza estado de revisión/copiado de una sugerencia."""
+        ensure_auth(request)
         valid_statuses = {"draft", "reviewed", "copied"}
         if req.status not in valid_statuses:
             raise HTTPException(status_code=400, detail=f"status must be one of {sorted(valid_statuses)}")
@@ -97,8 +112,9 @@ def create_email_router(
         raise HTTPException(status_code=404, detail=f"Suggestion not found: {suggestion_id}")
 
     @router.post("/suggestions/manual")
-    def manual_suggestion(req: ManualSuggestionRequest):
+    def manual_suggestion(req: ManualSuggestionRequest, request: Request):
         """Genera una sugerencia nueva a partir de texto pegado manualmente."""
+        ensure_auth(request)
         ensure_config()
         try:
             item = service.create_suggestion_from_text(
@@ -111,19 +127,22 @@ def create_email_router(
             raise HTTPException(status_code=400, detail=str(err)) from err
 
     @router.get("/settings")
-    def get_settings():
+    def get_settings(request: Request):
         """Devuelve configuración editable del agente de correo."""
+        ensure_auth(request)
         return {"ok": True, "settings": service.get_settings()}
 
     @router.post("/settings")
-    def update_settings(req: EmailSettingsRequest):
+    def update_settings(req: EmailSettingsRequest, request: Request):
         """Actualiza configuración editable del agente de correo."""
+        ensure_auth(request)
         updated = service.update_settings(req.allowed_from_whitelist)
         return {"ok": True, "settings": updated}
 
     @router.get("/ui", response_class=HTMLResponse)
-    def ui():
+    def ui(request: Request):
         """UI ligera para revisar, ajustar y copiar propuestas de respuesta."""
+        ensure_auth(request)
         return HTMLResponse(
             """
 <!doctype html>
@@ -282,8 +301,15 @@ const currentPath = window.location.pathname.endsWith('/')
   ? window.location.pathname.slice(0, -1)
   : window.location.pathname;
 const apiBase = currentPath.endsWith('/ui') ? currentPath.slice(0, -3) : currentPath;
+const apiSecret = new URLSearchParams(window.location.search).get('secret') || '';
 const statusEl = document.getElementById('status');
 let currentSuggestionId = '';
+
+function withSecret(path) {
+  if (!apiSecret) return `${apiBase}${path}`;
+  const join = path.includes('?') ? '&' : '?';
+  return `${apiBase}${path}${join}secret=${encodeURIComponent(apiSecret)}`;
+}
 
 function setStatus(text) {
   statusEl.innerText = text;
@@ -296,7 +322,7 @@ async function checkNew() {
   btn.innerText = 'Checking new messages...';
   setStatus('Checking new messages...');
   try {
-    const r = await fetch(`${apiBase}/check-new`, {
+    const r = await fetch(withSecret('/check-new'), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({max_emails: 5, unread_only: true, mailbox: 'INBOX'})
@@ -338,7 +364,7 @@ async function submitRegenerate() {
   setStatus('Suggestion received');
   setStatus('Creating new response based on suggestion...');
   try {
-    const r = await fetch(`${apiBase}/suggestions/${currentSuggestionId}/regenerate`, {
+    const r = await fetch(withSecret(`/suggestions/${currentSuggestionId}/regenerate`), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({instruction})
@@ -377,7 +403,7 @@ function parseWhitelistInput(raw) {
 
 async function loadSettings() {
   try {
-    const r = await fetch(`${apiBase}/settings`);
+    const r = await fetch(withSecret('/settings'));
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
     const items = Array.isArray(data.settings?.allowed_from_whitelist)
@@ -398,7 +424,7 @@ async function saveSettings() {
     document.getElementById('allowedWhitelist').value
   );
   try {
-    const r = await fetch(`${apiBase}/settings`, {
+    const r = await fetch(withSecret('/settings'), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({allowed_from_whitelist})
@@ -433,7 +459,7 @@ async function submitManualSuggestion() {
   setStatus('Email text received');
   setStatus('Creating new response based on provided email text...');
   try {
-    const r = await fetch(`${apiBase}/suggestions/manual`, {
+    const r = await fetch(withSecret('/suggestions/manual'), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({from_text: fromText, subject, body})
@@ -455,7 +481,7 @@ async function submitManualSuggestion() {
 }
 
 async function markStatus(id, status) {
-  await fetch(`${apiBase}/suggestions/${id}/status`, {
+  await fetch(withSecret(`/suggestions/${id}/status`), {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({status})
@@ -524,7 +550,7 @@ function escapeHtml(value) {
 async function loadSuggestions() {
   let data;
   try {
-    const r = await fetch(`${apiBase}/suggestions`);
+    const r = await fetch(withSecret('/suggestions'));
     data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
   } catch (err) {
