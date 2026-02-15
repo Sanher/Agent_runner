@@ -1,0 +1,18 @@
+{
+  "job_secret": "cambia-esto-por-un-secreto",
+
+  "workday_target_url": "https://tu-web-objetivo.example.com",
+  "workday_sso_email": "tu.usuario@empresa.com",
+  "workday_timezone": "Europe/Madrid",
+  "workday_webhook_start_url": "https://tu-ha-webhook/start",
+  "workday_webhook_final_url": "https://tu-ha-webhook/final",
+  "workday_webhook_start_break_url": "https://tu-ha-webhook/start-break",
+  "workday_webhook_stop_break_url": "https://tu-ha-webhook/stop-break",
+
+  "email_openai_api_key": "sk-xxxx",
+  "email_openai_model": "gpt-4o-mini",
+  "email_imap_email": "tu-cuenta@gmail.com",
+  "email_imap_password": "tu-gmail-app-password",
+  "email_imap_host": "imap.gmail.com",
+  "email_webhook_notify_url": "https://tu-ha-webhook/email-notify"
+}

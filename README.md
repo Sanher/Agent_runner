@@ -17,24 +17,63 @@ Ahora hay dos agentes separados por carpeta y `main.py` actúa como **compositor
 - Python 3.11+
 - Dependencias en `requirements.txt`
 
-## Configuracion
+## Configuracion por agente
 
 La app admite configuración por variables de entorno y, cuando corre dentro del add-on, también lee `/data/options.json`.
 
-Variables relevantes:
+`main.py` carga claves nuevas separadas por agente y mantiene compatibilidad con las antiguas.
+
+### Compartido
 
 - `JOB_SECRET`
-- `HASS_WEBHOOK_URL_STATUS`
-- `HASS_WEBHOOK_URL_FINAL`
-- `SSO_EMAIL`
-- `TARGET_URL`
-- `TIMEZONE` (por defecto `Europe/Madrid`)
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL` (por defecto `gpt-4o-mini`)
-- `GMAIL_EMAIL`
-- `GMAIL_APP_PASSWORD` (app password de Gmail)
-- `GMAIL_IMAP_HOST` (por defecto `imap.gmail.com`)
-- `EMAIL_AGENT_WEBHOOK_NOTIFY` (si no se define, reutiliza `HASS_WEBHOOK_URL_STATUS`)
+
+### Agente web (`workday_agent`)
+
+- `WORKDAY_TARGET_URL` (legacy: `TARGET_URL`)
+- `WORKDAY_SSO_EMAIL` (legacy: `SSO_EMAIL`)
+- `WORKDAY_TIMEZONE` (legacy: `TIMEZONE`, por defecto `Europe/Madrid`)
+- `WORKDAY_WEBHOOK_START_URL` (legacy: `WORKDAY_WEBHOOK_STATUS_URL` / `HASS_WEBHOOK_URL_STATUS`)
+- `WORKDAY_WEBHOOK_FINAL_URL` (legacy: `HASS_WEBHOOK_URL_FINAL`)
+- `WORKDAY_WEBHOOK_START_BREAK_URL` (nuevo, webhook dedicado al click `start_break`)
+- `WORKDAY_WEBHOOK_STOP_BREAK_URL` (nuevo, webhook dedicado al click `stop_break`)
+
+Campos obligatorios para que `workday_agent` se considere válido y arranque automático:
+
+- `JOB_SECRET`
+- `WORKDAY_TARGET_URL`
+- `WORKDAY_WEBHOOK_START_URL`
+- `WORKDAY_WEBHOOK_FINAL_URL`
+- `WORKDAY_WEBHOOK_START_BREAK_URL`
+- `WORKDAY_WEBHOOK_STOP_BREAK_URL`
+
+`WORKDAY_SSO_EMAIL` sigue siendo opcional.
+
+### Agente correo (`email_agent`)
+
+- `EMAIL_OPENAI_API_KEY` (legacy: `OPENAI_API_KEY`)
+- `EMAIL_OPENAI_MODEL` (legacy: `OPENAI_MODEL`, por defecto `gpt-4o-mini`)
+- `EMAIL_IMAP_EMAIL` (legacy: `GMAIL_EMAIL`)
+- `EMAIL_IMAP_PASSWORD` (legacy: `GMAIL_APP_PASSWORD`, app password de Gmail)
+- `EMAIL_IMAP_HOST` (legacy: `GMAIL_IMAP_HOST`, por defecto `imap.gmail.com`)
+- `EMAIL_WEBHOOK_NOTIFY_URL` (legacy: `EMAIL_AGENT_WEBHOOK_NOTIFY`; por defecto reutiliza `WORKDAY_WEBHOOK_START_URL`)
+
+Campos obligatorios para que `email_agent` pueda ejecutar detección/regeneración:
+
+- `EMAIL_OPENAI_API_KEY`
+- `EMAIL_IMAP_EMAIL`
+- `EMAIL_IMAP_PASSWORD`
+
+Ejemplo mínimo para correo (Gmail IMAP):
+
+```json
+{
+  "email_imap_email": "tu-cuenta@gmail.com",
+  "email_imap_password": "tu-app-password-de-gmail",
+  "email_imap_host": "imap.gmail.com",
+  "email_openai_api_key": "sk-...",
+  "email_openai_model": "gpt-4o-mini"
+}
+```
 
 ## Ejecucion local
 
@@ -53,6 +92,13 @@ uvicorn main:APP --host 0.0.0.0 --port 8099
 
 - `POST /run/{job_name}`
 - `GET /jobs`
+- `GET /status`
+
+Notas:
+
+- El scheduler interno lanza `workday_flow` automáticamente en weekdays cuando la config obligatoria está completa.
+- La ventana de arranque automático se evalúa entre `06:57` y `08:31` (hora local de `WORKDAY_TIMEZONE`).
+- Si falta configuración obligatoria, el scheduler no ejecuta y `POST /run/{job_name}` devuelve `400`.
 
 ### Agente de correo
 

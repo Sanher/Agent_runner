@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -13,7 +13,11 @@ class RunRequest(BaseModel):
     payload: Optional[Dict[str, Any]] = None
 
 
-def create_workday_router(service: WorkdayAgentService, job_secret: str) -> APIRouter:
+def create_workday_router(
+    service: WorkdayAgentService,
+    job_secret: str,
+    missing_config_fn: Callable[[], List[str]],
+) -> APIRouter:
     """Crea router HTTP del agente web y delega ejecución al servicio."""
     router = APIRouter(tags=["workday-agent"])
 
@@ -22,6 +26,13 @@ def create_workday_router(service: WorkdayAgentService, job_secret: str) -> APIR
     @router.post("/run/{job_name}")
     def run_job(job_name: str, req: RunRequest):
         """Ejecuta un job registrado (por ejemplo workday_flow)."""
+        missing = missing_config_fn()
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Workday config inválida. Faltan: {', '.join(sorted(missing))}",
+            )
+
         if job_secret:
             provided = (req.payload or {}).get("secret", "")
             if provided != job_secret:
@@ -38,5 +49,10 @@ def create_workday_router(service: WorkdayAgentService, job_secret: str) -> APIR
     def list_jobs():
         """Lista jobs disponibles en el agente web."""
         return {"jobs": sorted(runners.keys())}
+
+    @router.get("/status")
+    def status():
+        """Devuelve estado en tiempo real del flujo workday."""
+        return service.get_status()
 
     return router

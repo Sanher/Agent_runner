@@ -1,4 +1,5 @@
 import random
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -19,16 +20,30 @@ class WorkdayAgentService:
         data_dir: Path,
         target_url: str,
         sso_email: str,
-        webhook_status_url: str,
+        webhook_start_url: str,
         webhook_final_url: str,
+        webhook_start_break_url: str,
+        webhook_stop_break_url: str,
         logger,
     ) -> None:
         self.data_dir = data_dir
         self.target_url = target_url
         self.sso_email = sso_email
-        self.webhook_status_url = webhook_status_url
+        self.webhook_start_url = webhook_start_url
         self.webhook_final_url = webhook_final_url
+        self.webhook_start_break_url = webhook_start_break_url
+        self.webhook_stop_break_url = webhook_stop_break_url
         self.logger = logger
+        self._run_lock = threading.Lock()
+        self._status_lock = threading.Lock()
+        self._runtime_state: Dict[str, Any] = {
+            "phase": "before_start",
+            "message": "Pendiente de inicio",
+            "run_id": "",
+            "job": "workday_flow",
+            "updated_at": datetime.now().isoformat(),
+            "ok": None,
+        }
         self._debug("Servicio inicializado")
 
     @staticmethod
@@ -45,6 +60,19 @@ class WorkdayAgentService:
 
     def list_jobs(self) -> Dict[str, Any]:
         return {"workday_flow": self.run_workday_flow}
+
+    def _set_runtime_state(self, phase: str, message: str, **meta: Any) -> None:
+        with self._status_lock:
+            self._runtime_state = {
+                "phase": phase,
+                "message": message,
+                "updated_at": datetime.now().isoformat(),
+                **meta,
+            }
+
+    def _get_runtime_state(self) -> Dict[str, Any]:
+        with self._status_lock:
+            return dict(self._runtime_state)
 
     def _artifact_dir(self, job: str, run_id: str) -> Path:
         d = self.data_dir / "runs" / job / run_id
@@ -93,7 +121,7 @@ class WorkdayAgentService:
         }
         log_fn = self.logger.info if ok else self.logger.error
         log_fn("[%s:%s] %s - %s", job_name, run_id, step, message)
-        self._post_webhook(self.webhook_status_url, payload)
+        # Estado paso a paso solo por logs; los webhooks homogéneos son por evento.
 
     def send_final(self, job_name: str, run_id: str, result: Dict[str, Any]):
         payload = {
@@ -106,6 +134,104 @@ class WorkdayAgentService:
         log_fn = self.logger.info if result.get("ok") else self.logger.error
         log_fn("Resultado final %s/%s: %s", job_name, run_id, payload["message"])
         self._post_webhook(self.webhook_final_url, payload)
+
+    def send_click_webhook(
+        self,
+        url: str,
+        job_name: str,
+        run_id: str,
+        click_name: str,
+        ok: bool,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        payload = {
+            "ok": ok,
+            "event": f"workday_{click_name}",
+            "job": job_name,
+            "run_id": run_id,
+            "ts": datetime.now().isoformat(),
+            "meta": meta or {},
+        }
+        self._post_webhook(url, payload)
+
+    @staticmethod
+    def _fmt_duration(seconds: int) -> str:
+        sec = max(0, int(seconds))
+        h, rem = divmod(sec, 3600)
+        m, s = divmod(rem, 60)
+        if h > 0:
+            return f"{h}h {m}m"
+        if m > 0:
+            return f"{m}m {s}s"
+        return f"{s}s"
+
+    @staticmethod
+    def _fmt_clock(ts: Optional[float]) -> str:
+        if not ts:
+            return ""
+        return datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+
+    def get_status(self) -> Dict[str, Any]:
+        state = self._get_runtime_state()
+        now_ts = time.time()
+        phase = str(state.get("phase", "before_start"))
+
+        if phase == "waiting_start":
+            planned = float(state.get("planned_first_ts", 0))
+            remaining = max(0, int(planned - now_ts))
+            state["message"] = f"Esperando a empezar, faltan {self._fmt_duration(remaining)}"
+            state["remaining_seconds"] = remaining
+            return state
+
+        if phase == "working_before_break":
+            first_ts = float(state.get("first_click_ts", now_ts))
+            elapsed = max(0, int(now_ts - first_ts))
+            state["message"] = f"Jornada iniciada, lleva {self._fmt_duration(elapsed)} en marcha"
+            state["elapsed_seconds"] = elapsed
+            return state
+
+        if phase == "on_break":
+            planned = float(state.get("planned_stop_break_ts", 0))
+            remaining = max(0, int(planned - now_ts))
+            state["message"] = f"En descanso, quedan {self._fmt_duration(remaining)}"
+            state["remaining_seconds"] = remaining
+            return state
+
+        if phase == "working_after_break":
+            planned = float(state.get("planned_final_ts", 0))
+            remaining = max(0, int(planned - now_ts))
+            state["message"] = f"Después del descanso, tiempo restante {self._fmt_duration(remaining)}"
+            state["remaining_seconds"] = remaining
+            return state
+
+        if phase == "completed":
+            if state.get("ok"):
+                state["message"] = (
+                    "Jornada completada correctamente. "
+                    f"Inicio {self._fmt_clock(state.get('first_click_ts'))}, "
+                    f"start break {self._fmt_clock(state.get('start_break_ts'))}, "
+                    f"stop break {self._fmt_clock(state.get('stop_break_ts'))}, "
+                    f"fin {self._fmt_clock(state.get('final_click_ts'))}."
+                )
+            return state
+
+        if phase == "failed":
+            state["message"] = f"Ejecución con error: {state.get('error', 'desconocido')}"
+            return state
+
+        # before_start o cualquier valor no esperado
+        first_start = self._today_at(6, 58).timestamp()
+        first_end = self._today_at(8, 31).timestamp()
+        if now_ts < first_start:
+            state["message"] = (
+                f"Antes del inicio, faltan {self._fmt_duration(int(first_start - now_ts))} "
+                "para la ventana de arranque."
+            )
+        elif now_ts <= first_end:
+            state["message"] = "Ventana de arranque abierta, esperando inicio del flujo."
+        else:
+            state["message"] = "Fuera de ventana de arranque del primer click."
+        return state
 
     @staticmethod
     def _today_at(hour: int, minute: int, second: int = 0) -> datetime:
@@ -143,6 +269,25 @@ class WorkdayAgentService:
         return False
 
     def run_workday_flow(self, job_name: str, supervision: bool, run_id: str) -> Dict[str, Any]:
+        if not self._run_lock.acquire(blocking=False):
+            result = {
+                "ok": False,
+                "job": job_name,
+                "run_id": run_id,
+                "error": "Ya hay una ejecución activa para workday_flow",
+            }
+            self._set_runtime_state(
+                "failed",
+                "Ejecución rechazada por concurrencia",
+                run_id=run_id,
+                job=job_name,
+                ok=False,
+                error=result["error"],
+            )
+            self.send_status(job_name, run_id, "busy", result["error"], ok=False)
+            self.send_final(job_name, run_id, result)
+            return result
+
         self._debug("Inicio run_workday_flow", job_name=job_name, run_id=run_id, supervision=supervision)
         run_dir = self._artifact_dir(job_name, run_id)
         storage_path = self.data_dir / "storage" / f"{job_name}.json"
@@ -180,6 +325,14 @@ class WorkdayAgentService:
                     raise RuntimeError("La ejecución empezó después de las 08:31 para el primer click")
 
                 random_first = random.uniform(first_start.timestamp(), first_end.timestamp())
+                self._set_runtime_state(
+                    "waiting_start",
+                    "Esperando a empezar",
+                    run_id=run_id,
+                    job=job_name,
+                    ok=None,
+                    planned_first_ts=random_first,
+                )
                 self.send_status(
                     job_name,
                     run_id,
@@ -225,6 +378,14 @@ class WorkdayAgentService:
 
                 self._click_icon_button(page, "Icon-play")
                 self.send_status(job_name, run_id, "first_click", "Pulsado botón de inicio (Icon-play)")
+                self.send_click_webhook(
+                    self.webhook_start_url,
+                    job_name=job_name,
+                    run_id=run_id,
+                    click_name="start_click",
+                    ok=True,
+                    meta={"executed_at": datetime.now().isoformat()},
+                )
                 snap("first_click")
                 first_click_ts = time.time()
 
@@ -238,13 +399,35 @@ class WorkdayAgentService:
                     "Start break (Icon-pause) planificado",
                     extra={"at": datetime.fromtimestamp(second_click_ts).isoformat()},
                 )
+                self._set_runtime_state(
+                    "working_before_break",
+                    "Jornada iniciada",
+                    run_id=run_id,
+                    job=job_name,
+                    ok=None,
+                    first_click_ts=first_click_ts,
+                    planned_start_break_ts=second_click_ts,
+                )
                 self._sleep_until(second_click_ts)
                 page.reload(wait_until="domcontentloaded", timeout=60_000)
                 self._dismiss_cookie_popup(page)
                 self._dismiss_location_prompt(page)
                 self._click_icon_button(page, "Icon-pause")
+                start_break_at = datetime.now().isoformat()
                 self.send_status(job_name, run_id, "start_break_click", "Pulsado start break (Icon-pause)")
+                self.send_click_webhook(
+                    self.webhook_start_break_url,
+                    job_name=job_name,
+                    run_id=run_id,
+                    click_name="start_break_click",
+                    ok=True,
+                    meta={
+                        "scheduled_at": datetime.fromtimestamp(second_click_ts).isoformat(),
+                        "executed_at": start_break_at,
+                    },
+                )
                 snap("start_break_click")
+                start_break_ts = datetime.fromisoformat(start_break_at).timestamp()
 
                 third_min = time.time() + (14 * 60) + 30
                 third_max = time.time() + (15 * 60) + 59
@@ -256,13 +439,39 @@ class WorkdayAgentService:
                     "Stop break (Icon-play) planificado",
                     extra={"at": datetime.fromtimestamp(third_click_ts).isoformat()},
                 )
+                self._set_runtime_state(
+                    "on_break",
+                    "En descanso",
+                    run_id=run_id,
+                    job=job_name,
+                    ok=None,
+                    first_click_ts=first_click_ts,
+                    start_break_ts=start_break_ts,
+                    planned_stop_break_ts=third_click_ts,
+                )
                 self._sleep_until(third_click_ts)
                 page.reload(wait_until="domcontentloaded", timeout=60_000)
                 self._dismiss_cookie_popup(page)
                 self._dismiss_location_prompt(page)
                 self._click_icon_button(page, "Icon-play")
+                stop_break_at = datetime.now().isoformat()
                 self.send_status(job_name, run_id, "stop_break_click", "Pulsado stop break (Icon-play)")
+                break_gap_seconds = max(0, int(datetime.fromisoformat(stop_break_at).timestamp() - datetime.fromisoformat(start_break_at).timestamp()))
+                self.send_click_webhook(
+                    self.webhook_stop_break_url,
+                    job_name=job_name,
+                    run_id=run_id,
+                    click_name="stop_break_click",
+                    ok=True,
+                    meta={
+                        "scheduled_at": datetime.fromtimestamp(third_click_ts).isoformat(),
+                        "executed_at": stop_break_at,
+                        "gap_seconds_from_start_break": break_gap_seconds,
+                        "gap_minutes_from_start_break": round(break_gap_seconds / 60, 2),
+                    },
+                )
                 snap("stop_break_click")
+                stop_break_ts = datetime.fromisoformat(stop_break_at).timestamp()
 
                 final_latest = first_click_ts + (7 * 3600) + (45 * 60)
                 final_earliest = first_click_ts + (7 * 3600)
@@ -274,6 +483,17 @@ class WorkdayAgentService:
                     "Click final (Icon-stop) planificado",
                     extra={"at": datetime.fromtimestamp(final_ts).isoformat()},
                 )
+                self._set_runtime_state(
+                    "working_after_break",
+                    "Tramo final",
+                    run_id=run_id,
+                    job=job_name,
+                    ok=None,
+                    first_click_ts=first_click_ts,
+                    start_break_ts=start_break_ts,
+                    stop_break_ts=stop_break_ts,
+                    planned_final_ts=final_ts,
+                )
                 self._sleep_until(final_ts)
                 page.reload(wait_until="domcontentloaded", timeout=60_000)
                 self._dismiss_cookie_popup(page)
@@ -281,6 +501,7 @@ class WorkdayAgentService:
                 self._click_icon_button(page, "Icon-stop")
                 self.send_status(job_name, run_id, "final_click", "Pulsado fin de jornada (Icon-stop)")
                 snap("final_click")
+                final_click_ts = time.time()
 
                 result = {
                     "ok": True,
@@ -289,6 +510,17 @@ class WorkdayAgentService:
                     "url": page.url,
                     "data_dir": str(self.data_dir),
                 }
+                self._set_runtime_state(
+                    "completed",
+                    "Jornada completada",
+                    run_id=run_id,
+                    job=job_name,
+                    ok=True,
+                    first_click_ts=first_click_ts,
+                    start_break_ts=start_break_ts,
+                    stop_break_ts=stop_break_ts,
+                    final_click_ts=final_click_ts,
+                )
                 self.send_final(job_name, run_id, result)
                 self._debug("Run completado OK", job_name=job_name, run_id=run_id)
                 return result
@@ -306,6 +538,14 @@ class WorkdayAgentService:
                     "error": str(err),
                     "url": page.url if "page" in locals() else "",
                 }
+                self._set_runtime_state(
+                    "failed",
+                    "Jornada con error",
+                    run_id=run_id,
+                    job=job_name,
+                    ok=False,
+                    error=str(err),
+                )
                 self.send_status(job_name, run_id, "error", f"Error en ejecución: {err}", ok=False)
                 self.send_final(job_name, run_id, result)
                 self._debug("Run finalizado con error", job_name=job_name, run_id=run_id, error=str(err))
@@ -315,3 +555,4 @@ class WorkdayAgentService:
                 context.close()
                 browser.close()
                 self.logger.info("Recursos Playwright cerrados job=%s run_id=%s", job_name, run_id)
+                self._run_lock.release()

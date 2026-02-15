@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Callable, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
@@ -22,13 +22,25 @@ class MarkStatusRequest(BaseModel):
     status: str
 
 
-def create_email_router(service: EmailAgentService) -> APIRouter:
+def create_email_router(
+    service: EmailAgentService,
+    missing_config_fn: Callable[[], List[str]],
+) -> APIRouter:
     """Crea router HTTP y UI para revisión manual de respuestas de email."""
     router = APIRouter(prefix="/email-agent", tags=["email-agent"])
+
+    def ensure_config() -> None:
+        missing = missing_config_fn()
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Email config inválida. Faltan: {', '.join(sorted(missing))}",
+            )
 
     @router.post("/check-new")
     def check_new(req: CheckNewRequest):
         """Detecta nuevos correos y genera sugerencias (sin enviar email)."""
+        ensure_config()
         created = service.check_new_and_suggest(
             max_emails=max(1, min(req.max_emails, 20)),
             unread_only=req.unread_only,
@@ -52,6 +64,7 @@ def create_email_router(service: EmailAgentService) -> APIRouter:
     @router.post("/suggestions/{suggestion_id}/regenerate")
     def regenerate(suggestion_id: str, req: RegenerateRequest):
         """Regenera una sugerencia aplicando instrucciones del usuario."""
+        ensure_config()
         try:
             item = service.regenerate_suggestion(suggestion_id, req.instruction)
             return {"ok": True, "item": item}
