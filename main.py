@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 
 from agents.email_agent.service import EmailAgentService
 from agents.workday_agent.service import WorkdayAgentService
@@ -235,6 +236,12 @@ def _on_startup() -> None:
 
 APP.include_router(create_workday_router(workday_service, JOB_SECRET, _workday_missing_required_config))
 APP.include_router(create_email_router(email_service, _email_missing_required_config))
+
+
+@APP.get("/")
+def root():
+    """Redirige la raíz al UI del agente de correo (útil en Ingress)."""
+    return RedirectResponse(url="/email-agent/ui", status_code=307)
 
 
 @APP.get("/health")
