@@ -56,6 +56,8 @@ Campos obligatorios para que `workday_agent` se considere válido y arranque aut
 - `EMAIL_IMAP_PASSWORD` (legacy: `GMAIL_APP_PASSWORD`, app password de Gmail)
 - `EMAIL_IMAP_HOST` (legacy: `GMAIL_IMAP_HOST`, por defecto `imap.gmail.com`)
 - `EMAIL_WEBHOOK_NOTIFY_URL` (legacy: `EMAIL_AGENT_WEBHOOK_NOTIFY`; por defecto reutiliza `WORKDAY_WEBHOOK_START_URL`)
+- `EMAIL_ALLOWED_FROM_WHITELIST` (array; solo se generan sugerencias de estos remitentes, ej. `["info@dextools.io"]`)
+- `EMAIL_BACKGROUND_INTERVAL_HOURS` (por defecto `4`; chequeo automático en segundo plano)
 
 Campos obligatorios para que `email_agent` pueda ejecutar detección/regeneración:
 
@@ -106,6 +108,7 @@ Notas:
 - `GET /email-agent/suggestions`
 - `POST /email-agent/suggestions/{suggestion_id}/regenerate`
 - `POST /email-agent/suggestions/{suggestion_id}/status`
+- `POST /email-agent/suggestions/manual`
 - `GET /email-agent/ui`
 
 ## Flujo correo recomendado
@@ -115,6 +118,11 @@ Notas:
 3. Envía webhook para disparar una notificación de Telegram.
 4. Abres `GET /email-agent/ui` para revisar cada propuesta.
 5. Pides ajustes con “Suggest changes” y finalmente copias el texto para pegarlo manualmente en Gmail.
+
+Notas:
+
+- Además de llamadas manuales, el servicio ejecuta chequeo automático en segundo plano cada `EMAIL_BACKGROUND_INTERVAL_HOURS`.
+- Solo se generan sugerencias para emails cuyo remitente esté en `EMAIL_ALLOWED_FROM_WHITELIST`.
 
 ## Contexto y memoria del agente de correo
 

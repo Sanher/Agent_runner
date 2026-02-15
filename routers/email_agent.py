@@ -22,6 +22,12 @@ class MarkStatusRequest(BaseModel):
     status: str
 
 
+class ManualSuggestionRequest(BaseModel):
+    from_text: str = ""
+    subject: str = ""
+    body: str
+
+
 def create_email_router(
     service: EmailAgentService,
     missing_config_fn: Callable[[], List[str]],
@@ -85,6 +91,20 @@ def create_email_router(
                 service.save_suggestions(items)
                 return {"ok": True, "item": item}
         raise HTTPException(status_code=404, detail=f"Suggestion not found: {suggestion_id}")
+
+    @router.post("/suggestions/manual")
+    def manual_suggestion(req: ManualSuggestionRequest):
+        """Genera una sugerencia nueva a partir de texto pegado manualmente."""
+        ensure_config()
+        try:
+            item = service.create_suggestion_from_text(
+                from_text=req.from_text,
+                subject=req.subject,
+                body=req.body,
+            )
+            return {"ok": True, "item": item}
+        except RuntimeError as err:
+            raise HTTPException(status_code=400, detail=str(err)) from err
 
     @router.get("/ui", response_class=HTMLResponse)
     def ui():
@@ -172,6 +192,35 @@ def create_email_router(
 
     button:hover { background: var(--button-hover); }
     .muted { color: var(--muted); font-size: 0.9em; }
+    .hidden { display: none; }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+    .modal-card {
+      width: min(760px, 92vw);
+      max-height: 88vh;
+      overflow: auto;
+      border: 1px solid var(--card-border);
+      background: var(--card-bg);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .modal-card h3 { margin-top: 0; }
+    .field {
+      width: 100%;
+      background: var(--input-bg);
+      color: var(--text);
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      padding: 8px;
+      margin-bottom: 8px;
+    }
   </style>
 </head>
 <body>
@@ -179,35 +228,156 @@ def create_email_router(
   <p class=\"muted\">Genera propuestas desde Gmail, notifícalas por webhook y copia/pega la respuesta final manualmente en Gmail.</p>
 
   <button onclick=\"toggleTheme()\" id=\"themeToggle\">Switch to light mode</button>
-  <button onclick=\"checkNew()\">Check new emails</button>
+  <button onclick=\"checkNew()\" id=\"checkNewBtn\">Check new messages</button>
+  <button onclick=\"openManualModal()\" id=\"manualBtn\">Generate from text</button>
   <button onclick=\"loadSuggestions()\">Refresh list</button>
   <p id=\"status\"></p>
   <div id=\"list\"></div>
 
-<script>
-const currentPath = window.location.pathname.replace(/\\/+$/, '');
-const apiBase = currentPath.endsWith('/ui') ? currentPath.slice(0, -3) : currentPath;
+  <div id=\"suggestionModal\" class=\"modal-backdrop hidden\">
+    <div class=\"modal-card\">
+      <h3>Suggest changes</h3>
+      <p class=\"muted\">Write your request and generate a new response version.</p>
+      <textarea id=\"suggestionInstruction\" class=\"field\" style=\"min-height:180px\"></textarea>
+      <button onclick=\"submitRegenerate()\" id=\"submitRegenerateBtn\">Generate response</button>
+      <button onclick=\"closeSuggestionModal()\">Cancel</button>
+    </div>
+  </div>
 
-async function checkNew() {
-  const r = await fetch(`${apiBase}/check-new`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({max_emails: 5, unread_only: true, mailbox: 'INBOX'})
-  });
-  const data = await r.json();
-  document.getElementById('status').innerText = `Created ${data.created} new suggestions`;
-  await loadSuggestions();
+  <div id=\"manualModal\" class=\"modal-backdrop hidden\">
+    <div class=\"modal-card\">
+      <h3>Generate from email text</h3>
+      <p class=\"muted\">Paste an email and force a suggested response.</p>
+      <input id=\"manualFrom\" class=\"field\" placeholder=\"From (optional)\">
+      <input id=\"manualSubject\" class=\"field\" placeholder=\"Subject (optional)\">
+      <textarea id=\"manualBody\" class=\"field\" style=\"min-height:220px\" placeholder=\"Paste email body\"></textarea>
+      <button onclick=\"submitManualSuggestion()\" id=\"submitManualBtn\">Create response</button>
+      <button onclick=\"closeManualModal()\">Cancel</button>
+    </div>
+  </div>
+
+<script>
+const currentPath = window.location.pathname.endsWith('/')
+  ? window.location.pathname.slice(0, -1)
+  : window.location.pathname;
+const apiBase = currentPath.endsWith('/ui') ? currentPath.slice(0, -3) : currentPath;
+const statusEl = document.getElementById('status');
+let currentSuggestionId = '';
+
+function setStatus(text) {
+  statusEl.innerText = text;
 }
 
-async function regenerate(id) {
-  const instruction = prompt('Write a change request (e.g. make it shorter, friendlier, include ETA):');
-  if (!instruction) return;
-  await fetch(`${apiBase}/suggestions/${id}/regenerate`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({instruction})
-  });
-  await loadSuggestions();
+async function checkNew() {
+  const btn = document.getElementById('checkNewBtn');
+  const oldText = btn.innerText;
+  btn.disabled = true;
+  btn.innerText = 'Checking new messages...';
+  setStatus('Checking new messages...');
+  try {
+    const r = await fetch(`${apiBase}/check-new`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({max_emails: 5, unread_only: true, mailbox: 'INBOX'})
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    setStatus(`Created ${data.created} new suggestions`);
+    await loadSuggestions();
+  } catch (err) {
+    setStatus(`Error checking email: ${err}`);
+  } finally {
+    btn.disabled = false;
+    btn.innerText = oldText;
+  }
+}
+
+function openSuggestionModal(id) {
+  currentSuggestionId = id;
+  const modal = document.getElementById('suggestionModal');
+  const area = document.getElementById('suggestionInstruction');
+  area.value = '';
+  modal.classList.remove('hidden');
+  area.focus();
+}
+
+function closeSuggestionModal() {
+  document.getElementById('suggestionModal').classList.add('hidden');
+  currentSuggestionId = '';
+}
+
+async function submitRegenerate() {
+  const area = document.getElementById('suggestionInstruction');
+  const instruction = area.value.trim();
+  if (!instruction || !currentSuggestionId) return;
+  const btn = document.getElementById('submitRegenerateBtn');
+  const oldText = btn.innerText;
+  btn.disabled = true;
+  btn.innerText = 'Creating...';
+  setStatus('Suggestion received');
+  setStatus('Creating new response based on suggestion...');
+  try {
+    const r = await fetch(`${apiBase}/suggestions/${currentSuggestionId}/regenerate`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({instruction})
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    closeSuggestionModal();
+    setStatus('Suggested response updated');
+    await loadSuggestions();
+  } catch (err) {
+    setStatus(`Error regenerating suggestion: ${err}`);
+  } finally {
+    btn.disabled = false;
+    btn.innerText = oldText;
+  }
+}
+
+function openManualModal() {
+  document.getElementById('manualModal').classList.remove('hidden');
+  document.getElementById('manualBody').focus();
+}
+
+function closeManualModal() {
+  document.getElementById('manualModal').classList.add('hidden');
+}
+
+async function submitManualSuggestion() {
+  const fromText = document.getElementById('manualFrom').value.trim();
+  const subject = document.getElementById('manualSubject').value.trim();
+  const body = document.getElementById('manualBody').value.trim();
+  if (!body) {
+    setStatus('Please provide the email body');
+    return;
+  }
+  const btn = document.getElementById('submitManualBtn');
+  const oldText = btn.innerText;
+  btn.disabled = true;
+  btn.innerText = 'Creating...';
+  setStatus('Email text received');
+  setStatus('Creating new response based on provided email text...');
+  try {
+    const r = await fetch(`${apiBase}/suggestions/manual`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({from_text: fromText, subject, body})
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    closeManualModal();
+    document.getElementById('manualFrom').value = '';
+    document.getElementById('manualSubject').value = '';
+    document.getElementById('manualBody').value = '';
+    setStatus('New response created from manual email text');
+    await loadSuggestions();
+  } catch (err) {
+    setStatus(`Error creating manual suggestion: ${err}`);
+  } finally {
+    btn.disabled = false;
+    btn.innerText = oldText;
+  }
 }
 
 async function markStatus(id, status) {
@@ -262,10 +432,21 @@ function escapeHtml(value) {
 }
 
 async function loadSuggestions() {
-  const r = await fetch(`${apiBase}/suggestions`);
-  const data = await r.json();
+  let data;
+  try {
+    const r = await fetch(`${apiBase}/suggestions`);
+    data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+  } catch (err) {
+    setStatus(`Error loading suggestions: ${err}`);
+    return;
+  }
   const list = document.getElementById('list');
   list.innerHTML = '';
+  if (!Array.isArray(data.items) || data.items.length === 0) {
+    list.innerHTML = `<div class="card"><p class="muted">No suggestions yet. Use <b>Check new messages</b> or <b>Generate from text</b>.</p></div>`;
+    return;
+  }
   for (const item of data.items.reverse()) {
     const div = document.createElement('div');
     div.className = 'card';
@@ -278,7 +459,7 @@ async function loadSuggestions() {
       <p><b>Suggested reply</b></p>
       <textarea id='reply-${safeId}'></textarea>
       <div>
-        <button onclick="regenerate('${safeId}')">Suggest changes</button>
+        <button onclick="openSuggestionModal('${safeId}')">Suggest changes</button>
         <button onclick="copyText('${safeId}')">Copy</button>
         <button onclick="markStatus('${safeId}','reviewed')">Mark reviewed</button>
       </div>

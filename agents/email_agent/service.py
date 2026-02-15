@@ -2,9 +2,11 @@ import email
 import imaplib
 import json
 import logging
+import threading
 from datetime import datetime
 from email.header import decode_header
 from email.message import Message
+from email.utils import parseaddr
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -27,6 +29,7 @@ class EmailAgentService:
         gmail_app_password: str,
         gmail_imap_host: str,
         webhook_notify_url: str,
+        allowed_from_whitelist: List[str],
     ) -> None:
         self.data_dir = data_dir
         self.openai_api_key = openai_api_key
@@ -35,6 +38,14 @@ class EmailAgentService:
         self.gmail_app_password = gmail_app_password
         self.gmail_imap_host = gmail_imap_host
         self.webhook_notify_url = webhook_notify_url
+        self.allowed_from_whitelist = sorted(
+            {
+                str(item).strip().lower()
+                for item in allowed_from_whitelist
+                if str(item).strip()
+            }
+        )
+        self._check_lock = threading.Lock()
 
         self.config_path = self.data_dir / "email_agent_config.json"
         self.memory_path = self.data_dir / "email_agent_memory.jsonl"
@@ -62,6 +73,23 @@ class EmailAgentService:
             else:
                 decoded.append(content)
         return "".join(decoded)
+
+    @staticmethod
+    def _extract_email_address(raw_from: str) -> str:
+        return parseaddr(raw_from or "")[1].strip().lower()
+
+    @staticmethod
+    def _build_from_criteria(whitelist: List[str]) -> List[str]:
+        if not whitelist:
+            return []
+        if len(whitelist) == 1:
+            return ["FROM", f'"{whitelist[0]}"']
+
+        # IMAP OR es binario: OR A B. Encadenamos para N remitentes.
+        tokens: List[str] = ["OR", "FROM", f'"{whitelist[0]}"', "FROM", f'"{whitelist[1]}"']
+        for sender in whitelist[2:]:
+            tokens = ["OR", *tokens, "FROM", f'"{sender}"']
+        return tokens
 
     @staticmethod
     def _extract_text_from_email(msg: Message) -> str:
@@ -145,7 +173,8 @@ class EmailAgentService:
         if not self.gmail_email or not self.gmail_app_password:
             raise RuntimeError("Missing gmail_email or gmail_app_password")
 
-        query = "UNSEEN" if unread_only else "ALL"
+        criteria: List[str] = ["UNSEEN"] if unread_only else ["ALL"]
+        criteria += self._build_from_criteria(self.allowed_from_whitelist)
         messages: List[Dict[str, Any]] = []
 
         with imaplib.IMAP4_SSL(self.gmail_imap_host) as mail:
@@ -154,7 +183,7 @@ class EmailAgentService:
             if status != "OK":
                 raise RuntimeError(f"Could not open mailbox {mailbox}")
 
-            status, data = mail.search(None, query)
+            status, data = mail.search(None, *criteria)
             if status != "OK":
                 raise RuntimeError("Could not search messages")
 
@@ -260,45 +289,106 @@ class EmailAgentService:
             logger.exception(f"[{AGENT_NAME}] No se pudo enviar webhook de sugerencia de email | hora_texto={self._now_text()}")
 
     def check_new_and_suggest(self, max_emails: int, unread_only: bool, mailbox: str) -> List[Dict[str, Any]]:
+        if not self._check_lock.acquire(blocking=False):
+            self._debug("Detección omitida: ya hay una ejecución en curso")
+            return []
+
         self._debug("Inicio de detección de correos nuevos", mailbox=mailbox)
-        config = self.load_config()
-        known = self.load_suggestions()
-        known_ids = {item["email_id"] for item in known}
+        try:
+            config = self.load_config()
+            known = self.load_suggestions()
+            known_ids = {item["email_id"] for item in known}
 
-        created: List[Dict[str, Any]] = []
-        for msg in self._fetch_gmail_messages(max_emails=max_emails, unread_only=unread_only, mailbox=mailbox):
-            if msg["id"] in known_ids:
-                continue
-            draft = self._generate_draft(msg, config)
-            suggestion = {
-                "suggestion_id": f"s-{msg['id']}-{int(datetime.now().timestamp())}",
-                "email_id": msg["id"],
-                "from": msg["from"],
-                "subject": msg["subject"],
-                "date": msg["date"],
-                "original_body": msg["body"],
-                "suggested_reply": draft,
-                "status": "draft",
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
-            }
-            known.append(suggestion)
-            created.append(suggestion)
-            self._debug("Sugerencia creada", suggestion_id=suggestion["suggestion_id"], email_id=msg["id"])
+            created: List[Dict[str, Any]] = []
+            for msg in self._fetch_gmail_messages(max_emails=max_emails, unread_only=unread_only, mailbox=mailbox):
+                if msg["id"] in known_ids:
+                    continue
 
-            self.append_memory(
-                {
-                    "ts": datetime.now().isoformat(),
-                    "subject": msg["subject"],
+                sender_email = self._extract_email_address(msg.get("from", ""))
+                if self.allowed_from_whitelist and sender_email not in self.allowed_from_whitelist:
+                    self._debug(
+                        "Correo ignorado por remitente",
+                        email_id=msg.get("id", ""),
+                        from_email=sender_email,
+                    )
+                    continue
+
+                draft = self._generate_draft(msg, config)
+                suggestion = {
+                    "suggestion_id": f"s-{msg['id']}-{int(datetime.now().timestamp())}",
+                    "email_id": msg["id"],
                     "from": msg["from"],
+                    "subject": msg["subject"],
+                    "date": msg["date"],
+                    "original_body": msg["body"],
                     "suggested_reply": draft,
+                    "status": "draft",
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat(),
                 }
-            )
-            self._notify_new_suggestion(suggestion)
+                known.append(suggestion)
+                created.append(suggestion)
+                self._debug("Sugerencia creada", suggestion_id=suggestion["suggestion_id"], email_id=msg["id"])
 
-        self.save_suggestions(known)
-        self._debug("Detección finalizada", created=len(created), total_guardadas=len(known))
-        return created
+                self.append_memory(
+                    {
+                        "ts": datetime.now().isoformat(),
+                        "subject": msg["subject"],
+                        "from": msg["from"],
+                        "suggested_reply": draft,
+                    }
+                )
+                self._notify_new_suggestion(suggestion)
+
+            self.save_suggestions(known)
+            self._debug("Detección finalizada", created=len(created), total_guardadas=len(known))
+            return created
+        finally:
+            self._check_lock.release()
+
+    def create_suggestion_from_text(self, from_text: str, subject: str, body: str) -> Dict[str, Any]:
+        """Crea una sugerencia manual a partir de texto introducido por el usuario."""
+        if not body.strip():
+            raise RuntimeError("Body is required")
+
+        config = self.load_config()
+        suggestions = self.load_suggestions()
+        manual_id = f"manual-{int(datetime.now().timestamp())}"
+        email_item = {
+            "id": manual_id,
+            "from": from_text.strip()
+            or (self.allowed_from_whitelist[0] if self.allowed_from_whitelist else "manual@local"),
+            "subject": subject.strip() or "Manual email",
+            "date": datetime.now().isoformat(),
+            "body": body.strip(),
+        }
+        draft = self._generate_draft(email_item, config)
+        suggestion = {
+            "suggestion_id": f"s-{manual_id}",
+            "email_id": manual_id,
+            "from": email_item["from"],
+            "subject": email_item["subject"],
+            "date": email_item["date"],
+            "original_body": email_item["body"],
+            "suggested_reply": draft,
+            "status": "draft",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "source": "manual_input",
+        }
+        suggestions.append(suggestion)
+        self.save_suggestions(suggestions)
+        self.append_memory(
+            {
+                "ts": datetime.now().isoformat(),
+                "subject": email_item["subject"],
+                "from": email_item["from"],
+                "suggested_reply": draft,
+                "source": "manual_input",
+            }
+        )
+        self._debug("Sugerencia manual creada", suggestion_id=suggestion["suggestion_id"])
+        return suggestion
 
     def regenerate_suggestion(self, suggestion_id: str, user_instruction: str) -> Dict[str, Any]:
         self._debug("Regenerando sugerencia", suggestion_id=suggestion_id)

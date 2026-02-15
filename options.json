@@ -14,5 +14,9 @@
   "email_imap_email": "tu-cuenta@gmail.com",
   "email_imap_password": "tu-gmail-app-password",
   "email_imap_host": "imap.gmail.com",
+  "email_allowed_from_whitelist": [
+    "info@dextools.io"
+  ],
+  "email_background_interval_hours": 4,
   "email_webhook_notify_url": "https://tu-ha-webhook/email-notify"
 }

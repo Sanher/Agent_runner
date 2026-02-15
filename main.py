@@ -56,6 +56,7 @@ def _setting(name: str, default: str = "") -> str:
         return os.getenv(env_name, default)
     return str(ADDON_OPTIONS.get(name.lower(), default))
 
+
 def _setting_with_aliases(name: str, aliases: list[str], default: str = "") -> str:
     """Resuelve setting por clave principal y aliases (retrocompatibilidad)."""
     value = _setting(name, "")
@@ -66,6 +67,45 @@ def _setting_with_aliases(name: str, aliases: list[str], default: str = "") -> s
         if value:
             return value
     return default
+
+
+def _setting_int(name: str, default: int) -> int:
+    raw = _setting(name, str(default)).strip()
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Valor inválido para %s=%s; usando %s", name, raw, default)
+        return default
+
+
+def _normalize_email_list(raw: Any) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(item).strip().lower() for item in raw if str(item).strip()]
+    if isinstance(raw, str):
+        return [item.strip().lower() for item in raw.split(",") if item.strip()]
+    return []
+
+
+def _setting_email_whitelist(name: str, aliases: list[str]) -> List[str]:
+    env_name = name.upper()
+    if env_name in os.environ:
+        return _normalize_email_list(os.getenv(env_name, ""))
+
+    value = ADDON_OPTIONS.get(name.lower())
+    if value is not None:
+        return _normalize_email_list(value)
+
+    for alias in aliases:
+        alias_env = alias.upper()
+        if alias_env in os.environ:
+            return _normalize_email_list(os.getenv(alias_env, ""))
+        value = ADDON_OPTIONS.get(alias.lower())
+        if value is not None:
+            return _normalize_email_list(value)
+
+    return []
 
 
 # Compartido
@@ -97,6 +137,11 @@ EMAIL_WEBHOOK_NOTIFY_URL = _setting_with_aliases(
     ["email_agent_webhook_notify"],
     WORKDAY_WEBHOOK_START_URL,
 )
+EMAIL_ALLOWED_FROM_WHITELIST = _setting_email_whitelist(
+    "email_allowed_from_whitelist",
+    ["email_allowed_from"],
+)
+EMAIL_BACKGROUND_INTERVAL_HOURS = max(1, _setting_int("email_background_interval_hours", 4))
 
 
 def _apply_timezone() -> None:
@@ -128,6 +173,7 @@ email_service = EmailAgentService(
     gmail_app_password=EMAIL_IMAP_PASSWORD,
     gmail_imap_host=EMAIL_IMAP_HOST,
     webhook_notify_url=EMAIL_WEBHOOK_NOTIFY_URL,
+    allowed_from_whitelist=EMAIL_ALLOWED_FROM_WHITELIST,
 )
 
 def _workday_missing_required_config() -> List[str]:
@@ -224,6 +270,38 @@ def _workday_scheduler_loop() -> None:
         time.sleep(30)
 
 
+def _email_scheduler_loop() -> None:
+    logger.info(
+        "Scheduler interno email iniciado (cada %s horas, whitelist=%s)",
+        EMAIL_BACKGROUND_INTERVAL_HOURS,
+        ",".join(EMAIL_ALLOWED_FROM_WHITELIST) if EMAIL_ALLOWED_FROM_WHITELIST else "*",
+    )
+    interval_seconds = EMAIL_BACKGROUND_INTERVAL_HOURS * 3600
+    last_invalid_signature = ""
+    while True:
+        missing = _email_missing_required_config()
+        if missing:
+            signature = ",".join(sorted(missing))
+            if signature != last_invalid_signature:
+                logger.error("Config email inválida. Faltan: %s", signature)
+                last_invalid_signature = signature
+            time.sleep(60)
+            continue
+
+        last_invalid_signature = ""
+        try:
+            created = email_service.check_new_and_suggest(
+                max_emails=10,
+                unread_only=True,
+                mailbox="INBOX",
+            )
+            logger.info("Email scheduler ejecutado. Nuevas sugerencias=%s", len(created))
+        except Exception:
+            logger.exception("Fallo no controlado en ejecución automática email")
+
+        time.sleep(interval_seconds)
+
+
 @APP.on_event("startup")
 def _on_startup() -> None:
     thread = threading.Thread(
@@ -232,6 +310,12 @@ def _on_startup() -> None:
         daemon=True,
     )
     thread.start()
+    email_thread = threading.Thread(
+        target=_email_scheduler_loop,
+        name="email-scheduler",
+        daemon=True,
+    )
+    email_thread.start()
 
 
 APP.include_router(create_workday_router(workday_service, JOB_SECRET, _workday_missing_required_config))
@@ -272,6 +356,8 @@ def health():
             "has_imap_credentials": bool(EMAIL_IMAP_EMAIL and EMAIL_IMAP_PASSWORD),
             "imap_host": EMAIL_IMAP_HOST,
             "has_webhook_notify": bool(EMAIL_WEBHOOK_NOTIFY_URL),
+            "allowed_from_whitelist": EMAIL_ALLOWED_FROM_WHITELIST,
+            "background_interval_hours": EMAIL_BACKGROUND_INTERVAL_HOURS,
         },
         "agents": ["workday_agent", "email_agent"],
     }
