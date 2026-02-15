@@ -28,6 +28,10 @@ class ManualSuggestionRequest(BaseModel):
     body: str
 
 
+class EmailSettingsRequest(BaseModel):
+    allowed_from_whitelist: List[str] = []
+
+
 def create_email_router(
     service: EmailAgentService,
     missing_config_fn: Callable[[], List[str]],
@@ -105,6 +109,17 @@ def create_email_router(
             return {"ok": True, "item": item}
         except RuntimeError as err:
             raise HTTPException(status_code=400, detail=str(err)) from err
+
+    @router.get("/settings")
+    def get_settings():
+        """Devuelve configuración editable del agente de correo."""
+        return {"ok": True, "settings": service.get_settings()}
+
+    @router.post("/settings")
+    def update_settings(req: EmailSettingsRequest):
+        """Actualiza configuración editable del agente de correo."""
+        updated = service.update_settings(req.allowed_from_whitelist)
+        return {"ok": True, "settings": updated}
 
     @router.get("/ui", response_class=HTMLResponse)
     def ui():
@@ -192,7 +207,6 @@ def create_email_router(
 
     button:hover { background: var(--button-hover); }
     .muted { color: var(--muted); font-size: 0.9em; }
-    .hidden { display: none; }
     .modal-backdrop {
       position: fixed;
       inset: 0;
@@ -202,6 +216,7 @@ def create_email_router(
       justify-content: center;
       z-index: 10;
     }
+    .modal-backdrop.hidden { display: none; }
     .modal-card {
       width: min(760px, 92vw);
       max-height: 88vh;
@@ -232,6 +247,12 @@ def create_email_router(
   <button onclick=\"openManualModal()\" id=\"manualBtn\">Generate from text</button>
   <button onclick=\"loadSuggestions()\">Refresh list</button>
   <p id=\"status\"></p>
+  <div class=\"card\">
+    <h3>Whitelist settings</h3>
+    <p class=\"muted\">One sender per line (or comma-separated). Only these senders generate suggestions.</p>
+    <textarea id=\"allowedWhitelist\" class=\"field\" style=\"min-height:90px\" placeholder=\"info@dextools.io\"></textarea>
+    <button onclick=\"saveSettings()\" id=\"saveSettingsBtn\">Save whitelist</button>
+  </div>
   <div id=\"list\"></div>
 
   <div id=\"suggestionModal\" class=\"modal-backdrop hidden\">
@@ -344,6 +365,59 @@ function closeManualModal() {
   document.getElementById('manualModal').classList.add('hidden');
 }
 
+function parseWhitelistInput(raw) {
+  const pieces = String(raw || '').replaceAll('\n', ',').split(',');
+  const unique = new Set();
+  for (const piece of pieces) {
+    const value = piece.trim().toLowerCase();
+    if (value) unique.add(value);
+  }
+  return Array.from(unique.values());
+}
+
+async function loadSettings() {
+  try {
+    const r = await fetch(`${apiBase}/settings`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    const items = Array.isArray(data.settings?.allowed_from_whitelist)
+      ? data.settings.allowed_from_whitelist
+      : [];
+    document.getElementById('allowedWhitelist').value = items.join('\n');
+  } catch (err) {
+    setStatus(`Error loading settings: ${err}`);
+  }
+}
+
+async function saveSettings() {
+  const btn = document.getElementById('saveSettingsBtn');
+  const oldText = btn.innerText;
+  btn.disabled = true;
+  btn.innerText = 'Saving...';
+  const allowed_from_whitelist = parseWhitelistInput(
+    document.getElementById('allowedWhitelist').value
+  );
+  try {
+    const r = await fetch(`${apiBase}/settings`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({allowed_from_whitelist})
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    const items = Array.isArray(data.settings?.allowed_from_whitelist)
+      ? data.settings.allowed_from_whitelist
+      : [];
+    document.getElementById('allowedWhitelist').value = items.join('\n');
+    setStatus(`Whitelist saved (${items.length} sender${items.length === 1 ? '' : 's'})`);
+  } catch (err) {
+    setStatus(`Error saving settings: ${err}`);
+  } finally {
+    btn.disabled = false;
+    btn.innerText = oldText;
+  }
+}
+
 async function submitManualSuggestion() {
   const fromText = document.getElementById('manualFrom').value.trim();
   const subject = document.getElementById('manualSubject').value.trim();
@@ -422,6 +496,22 @@ function toggleTheme() {
   setTheme(saved);
 })();
 
+(function bindModalCloseHandlers() {
+  const suggestionModal = document.getElementById('suggestionModal');
+  const manualModal = document.getElementById('manualModal');
+  suggestionModal.addEventListener('click', (event) => {
+    if (event.target === suggestionModal) closeSuggestionModal();
+  });
+  manualModal.addEventListener('click', (event) => {
+    if (event.target === manualModal) closeManualModal();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    closeSuggestionModal();
+    closeManualModal();
+  });
+})();
+
 function escapeHtml(value) {
   return String(value || '')
     .replaceAll('&', '&amp;')
@@ -472,6 +562,7 @@ async function loadSuggestions() {
   }
 }
 
+loadSettings();
 loadSuggestions();
 </script>
 </body>

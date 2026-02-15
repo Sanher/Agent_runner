@@ -79,6 +79,21 @@ class EmailAgentService:
         return parseaddr(raw_from or "")[1].strip().lower()
 
     @staticmethod
+    def _normalize_whitelist(raw: Any) -> List[str]:
+        if raw is None:
+            return []
+        if isinstance(raw, list):
+            return sorted({str(item).strip().lower() for item in raw if str(item).strip()})
+        if isinstance(raw, str):
+            values: List[str] = []
+            for piece in raw.replace("\n", ",").split(","):
+                value = piece.strip().lower()
+                if value:
+                    values.append(value)
+            return sorted(set(values))
+        return []
+
+    @staticmethod
     def _build_from_criteria(whitelist: List[str]) -> List[str]:
         if not whitelist:
             return []
@@ -168,13 +183,25 @@ class EmailAgentService:
             json.dumps(suggestions, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
-    def _fetch_gmail_messages(self, max_emails: int, unread_only: bool, mailbox: str) -> List[Dict[str, Any]]:
-        self._debug("Buscando correos en Gmail", mailbox=mailbox, unread_only=unread_only, max_emails=max_emails)
+    def _fetch_gmail_messages(
+        self,
+        max_emails: int,
+        unread_only: bool,
+        mailbox: str,
+        allowed_whitelist: List[str],
+    ) -> List[Dict[str, Any]]:
+        self._debug(
+            "Buscando correos en Gmail",
+            mailbox=mailbox,
+            unread_only=unread_only,
+            max_emails=max_emails,
+            whitelist=len(allowed_whitelist),
+        )
         if not self.gmail_email or not self.gmail_app_password:
             raise RuntimeError("Missing gmail_email or gmail_app_password")
 
         criteria: List[str] = ["UNSEEN"] if unread_only else ["ALL"]
-        criteria += self._build_from_criteria(self.allowed_from_whitelist)
+        criteria += self._build_from_criteria(allowed_whitelist)
         messages: List[Dict[str, Any]] = []
 
         with imaplib.IMAP4_SSL(self.gmail_imap_host) as mail:
@@ -296,16 +323,24 @@ class EmailAgentService:
         self._debug("Inicio de detección de correos nuevos", mailbox=mailbox)
         try:
             config = self.load_config()
+            active_whitelist = self._normalize_whitelist(config.get("allowed_from_whitelist"))
+            if not active_whitelist:
+                active_whitelist = self.allowed_from_whitelist
             known = self.load_suggestions()
             known_ids = {item["email_id"] for item in known}
 
             created: List[Dict[str, Any]] = []
-            for msg in self._fetch_gmail_messages(max_emails=max_emails, unread_only=unread_only, mailbox=mailbox):
+            for msg in self._fetch_gmail_messages(
+                max_emails=max_emails,
+                unread_only=unread_only,
+                mailbox=mailbox,
+                allowed_whitelist=active_whitelist,
+            ):
                 if msg["id"] in known_ids:
                     continue
 
                 sender_email = self._extract_email_address(msg.get("from", ""))
-                if self.allowed_from_whitelist and sender_email not in self.allowed_from_whitelist:
+                if active_whitelist and sender_email not in active_whitelist:
                     self._debug(
                         "Correo ignorado por remitente",
                         email_id=msg.get("id", ""),
@@ -352,12 +387,15 @@ class EmailAgentService:
             raise RuntimeError("Body is required")
 
         config = self.load_config()
+        active_whitelist = self._normalize_whitelist(config.get("allowed_from_whitelist"))
+        if not active_whitelist:
+            active_whitelist = self.allowed_from_whitelist
         suggestions = self.load_suggestions()
         manual_id = f"manual-{int(datetime.now().timestamp())}"
         email_item = {
             "id": manual_id,
             "from": from_text.strip()
-            or (self.allowed_from_whitelist[0] if self.allowed_from_whitelist else "manual@local"),
+            or (active_whitelist[0] if active_whitelist else "manual@local"),
             "subject": subject.strip() or "Manual email",
             "date": datetime.now().isoformat(),
             "body": body.strip(),
@@ -389,6 +427,25 @@ class EmailAgentService:
         )
         self._debug("Sugerencia manual creada", suggestion_id=suggestion["suggestion_id"])
         return suggestion
+
+    def get_settings(self) -> Dict[str, Any]:
+        config = self.load_config()
+        whitelist = self._normalize_whitelist(config.get("allowed_from_whitelist"))
+        if not whitelist:
+            whitelist = self.allowed_from_whitelist
+        return {"allowed_from_whitelist": whitelist}
+
+    def update_settings(self, allowed_from_whitelist: List[str]) -> Dict[str, Any]:
+        config = self.load_config()
+        normalized = self._normalize_whitelist(allowed_from_whitelist)
+        config["allowed_from_whitelist"] = normalized
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.write_text(
+            json.dumps(config, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        self._debug("Configuración de email actualizada", whitelist_count=len(normalized))
+        return {"allowed_from_whitelist": normalized}
 
     def regenerate_suggestion(self, suggestion_id: str, user_instruction: str) -> Dict[str, Any]:
         self._debug("Regenerando sugerencia", suggestion_id=suggestion_id)
