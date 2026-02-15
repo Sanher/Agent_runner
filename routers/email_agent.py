@@ -185,8 +185,11 @@ def create_email_router(
   <div id=\"list\"></div>
 
 <script>
+const currentPath = window.location.pathname.replace(/\\/+$/, '');
+const apiBase = currentPath.endsWith('/ui') ? currentPath.slice(0, -3) : currentPath;
+
 async function checkNew() {
-  const r = await fetch('/email-agent/check-new', {
+  const r = await fetch(`${apiBase}/check-new`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({max_emails: 5, unread_only: true, mailbox: 'INBOX'})
@@ -199,7 +202,7 @@ async function checkNew() {
 async function regenerate(id) {
   const instruction = prompt('Write a change request (e.g. make it shorter, friendlier, include ETA):');
   if (!instruction) return;
-  await fetch(`/email-agent/suggestions/${id}/regenerate`, {
+  await fetch(`${apiBase}/suggestions/${id}/regenerate`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({instruction})
@@ -208,7 +211,7 @@ async function regenerate(id) {
 }
 
 async function markStatus(id, status) {
-  await fetch(`/email-agent/suggestions/${id}/status`, {
+  await fetch(`${apiBase}/suggestions/${id}/status`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({status})
@@ -259,7 +262,7 @@ function escapeHtml(value) {
 }
 
 async function loadSuggestions() {
-  const r = await fetch('/email-agent/suggestions');
+  const r = await fetch(`${apiBase}/suggestions`);
   const data = await r.json();
   const list = document.getElementById('list');
   list.innerHTML = '';

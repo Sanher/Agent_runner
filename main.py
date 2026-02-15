@@ -241,7 +241,7 @@ APP.include_router(create_email_router(email_service, _email_missing_required_co
 @APP.get("/")
 def root():
     """Redirige la raíz al UI del agente de correo (útil en Ingress)."""
-    return RedirectResponse(url="/email-agent/ui", status_code=307)
+    return RedirectResponse(url="email-agent/ui", status_code=307)
 
 
 @APP.get("/health")
