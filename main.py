@@ -26,9 +26,26 @@ logger = logging.getLogger("agent_runner")
 
 APP = FastAPI(title="Agent Runner")
 
+def _resolve_data_dir() -> Path:
+    """Resuelve directorio de datos; en local permite override por ENV."""
+    requested = Path(os.getenv("AGENT_RUNNER_DATA_DIR", "/data")).expanduser()
+    try:
+        requested.mkdir(parents=True, exist_ok=True)
+        return requested.resolve()
+    except OSError:
+        # Fallback local para entornos donde /data es de solo lectura (p.ej. macOS host).
+        fallback = (Path.cwd() / ".data").resolve()
+        fallback.mkdir(parents=True, exist_ok=True)
+        logger.warning(
+            "No se pudo usar DATA_DIR=%s; usando fallback local %s",
+            requested,
+            fallback,
+        )
+        return fallback
+
+
 # Directorio persistente (Home Assistant add-on monta /data).
-DATA_DIR = Path("/data").resolve()
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR = _resolve_data_dir()
 
 
 def _load_addon_options() -> Dict[str, Any]:

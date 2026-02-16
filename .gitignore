@@ -5,3 +5,4 @@ __pycache*
 .DS_Store
 no_headless/*.json
 no_headless/.env
+.env

@@ -185,6 +185,7 @@ def create_email_router(
       color: var(--text);
       transition: background 0.2s ease, color 0.2s ease;
       padding: 0 12px;
+      box-sizing: border-box;
     }
 
     .card {
@@ -211,6 +212,7 @@ def create_email_router(
       border: 1px solid var(--input-border);
       border-radius: 6px;
       padding: 8px;
+      box-sizing: border-box;
     }
 
     button {
@@ -244,6 +246,7 @@ def create_email_router(
       background: var(--card-bg);
       border-radius: 10px;
       padding: 16px;
+      box-sizing: border-box;
     }
     .modal-card h3 { margin-top: 0; }
     .field {
@@ -254,6 +257,7 @@ def create_email_router(
       border-radius: 6px;
       padding: 8px;
       margin-bottom: 8px;
+      box-sizing: border-box;
     }
   </style>
 </head>
@@ -392,7 +396,7 @@ function closeManualModal() {
 }
 
 function parseWhitelistInput(raw) {
-  const pieces = String(raw || '').replaceAll('\n', ',').split(',');
+  const pieces = String(raw || '').replace(/\\n/g, ',').split(',');
   const unique = new Set();
   for (const piece of pieces) {
     const value = piece.trim().toLowerCase();
@@ -406,10 +410,11 @@ async function loadSettings() {
     const r = await fetch(withSecret('/settings'));
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
-    const items = Array.isArray(data.settings?.allowed_from_whitelist)
-      ? data.settings.allowed_from_whitelist
+    const settings = (data && data.settings) ? data.settings : {};
+    const items = Array.isArray(settings.allowed_from_whitelist)
+      ? settings.allowed_from_whitelist
       : [];
-    document.getElementById('allowedWhitelist').value = items.join('\n');
+    document.getElementById('allowedWhitelist').value = items.join('\\n');
   } catch (err) {
     setStatus(`Error loading settings: ${err}`);
   }
@@ -431,10 +436,11 @@ async function saveSettings() {
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
-    const items = Array.isArray(data.settings?.allowed_from_whitelist)
-      ? data.settings.allowed_from_whitelist
+    const settings = (data && data.settings) ? data.settings : {};
+    const items = Array.isArray(settings.allowed_from_whitelist)
+      ? settings.allowed_from_whitelist
       : [];
-    document.getElementById('allowedWhitelist').value = items.join('\n');
+    document.getElementById('allowedWhitelist').value = items.join('\\n');
     setStatus(`Whitelist saved (${items.length} sender${items.length === 1 ? '' : 's'})`);
   } catch (err) {
     setStatus(`Error saving settings: ${err}`);
@@ -525,13 +531,13 @@ function toggleTheme() {
 (function bindModalCloseHandlers() {
   const suggestionModal = document.getElementById('suggestionModal');
   const manualModal = document.getElementById('manualModal');
-  suggestionModal.addEventListener('click', (event) => {
+  suggestionModal.addEventListener('click', function(event) {
     if (event.target === suggestionModal) closeSuggestionModal();
   });
-  manualModal.addEventListener('click', (event) => {
+  manualModal.addEventListener('click', function(event) {
     if (event.target === manualModal) closeManualModal();
   });
-  document.addEventListener('keydown', (event) => {
+  document.addEventListener('keydown', function(event) {
     if (event.key !== 'Escape') return;
     closeSuggestionModal();
     closeManualModal();
@@ -540,11 +546,11 @@ function toggleTheme() {
 
 function escapeHtml(value) {
   return String(value || '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 async function loadSuggestions() {
