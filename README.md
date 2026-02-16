@@ -120,6 +120,7 @@ Seguridad:
 
 - Si `JOB_SECRET` está definido, los endpoints de `email_agent` exigen secreto.
 - Se puede enviar en header `X-Job-Secret` o en query string `?secret=...`.
+- En `POST /run/{job_name}` también se acepta en body JSON como `payload.secret` (retrocompatibilidad).
 - Para UI por navegador: `GET /email-agent/ui?secret=...`
 
 ## Flujo correo recomendado

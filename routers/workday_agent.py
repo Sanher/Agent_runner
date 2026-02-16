@@ -1,9 +1,12 @@
+import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from agents.workday_agent.service import WorkdayAgentService
+
+logger = logging.getLogger("agent_runner.workday_router")
 
 
 class RunRequest(BaseModel):
@@ -23,8 +26,29 @@ def create_workday_router(
 
     runners: Dict[str, Callable[[str, bool, str], Dict[str, Any]]] = service.list_jobs()
 
+    def _extract_secret(
+        request: Request,
+        req: Optional[RunRequest] = None,
+        allow_body: bool = False,
+    ) -> tuple[str, str]:
+        """Extrae secret y su origen sin exponer su valor en logs."""
+        header_secret = request.headers.get("x-job-secret", "").strip()
+        if header_secret:
+            return header_secret, "header"
+
+        query_secret = request.query_params.get("secret", "").strip()
+        if query_secret:
+            return query_secret, "query"
+
+        if allow_body and req is not None:
+            body_secret = str((req.payload or {}).get("secret", "")).strip()
+            if body_secret:
+                return body_secret, "body"
+
+        return "", "missing"
+
     @router.post("/run/{job_name}")
-    def run_job(job_name: str, req: RunRequest):
+    def run_job(job_name: str, req: RunRequest, request: Request):
         """Ejecuta un job registrado (por ejemplo workday_flow)."""
         missing = missing_config_fn()
         if missing:
@@ -34,9 +58,16 @@ def create_workday_router(
             )
 
         if job_secret:
-            provided = (req.payload or {}).get("secret", "")
+            provided, source = _extract_secret(request, req, allow_body=True)
             if provided != job_secret:
+                logger.warning(
+                    "Unauthorized en /run/%s (source=%s, client=%s)",
+                    job_name,
+                    source,
+                    request.client.host if request.client else "unknown",
+                )
                 raise HTTPException(status_code=401, detail="Unauthorized")
+            logger.debug("Auth OK en /run/%s (source=%s)", job_name, source)
 
         runner = runners.get(job_name)
         if not runner:
@@ -46,14 +77,20 @@ def create_workday_router(
         return runner(job_name=job_name, supervision=req.supervision, run_id=run_id)
 
     def ensure_auth(request: Request) -> None:
+        """Valida auth para endpoints GET/POST del router workday."""
         if not job_secret:
+            # Si no hay secret global, no se exige auth en este router.
             return
-        provided = (
-            request.headers.get("x-job-secret", "").strip()
-            or request.query_params.get("secret", "").strip()
-        )
+        provided, source = _extract_secret(request, allow_body=False)
         if provided != job_secret:
+            logger.warning(
+                "Unauthorized en %s (source=%s, client=%s)",
+                request.url.path,
+                source,
+                request.client.host if request.client else "unknown",
+            )
             raise HTTPException(status_code=401, detail="Unauthorized")
+        logger.debug("Auth OK en %s (source=%s)", request.url.path, source)
 
     @router.get("/jobs")
     def list_jobs(request: Request):
@@ -84,8 +121,10 @@ def create_workday_router(
         """Reintenta automáticamente la acción fallida más reciente (si aplica)."""
         ensure_auth(request)
         try:
+            logger.info("Retry manual solicitado en %s", request.url.path)
             return service.retry_failed_action()
         except RuntimeError as err:
+            logger.warning("Retry manual rechazado: %s", err)
             raise HTTPException(status_code=400, detail=str(err)) from err
 
     return router
