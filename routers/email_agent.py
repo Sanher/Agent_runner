@@ -149,7 +149,7 @@ def create_email_router(
 <html data-theme="dark">
 <head>
   <meta charset=\"utf-8\" />
-  <title>Email Agent UI</title>
+  <title>Agent Runner UI</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -179,12 +179,12 @@ def create_email_router(
 
     body {
       font-family: Arial, sans-serif;
-      max-width: 1000px;
+      max-width: 1100px;
       margin: 24px auto;
       background: var(--bg);
       color: var(--text);
       transition: background 0.2s ease, color 0.2s ease;
-      padding: 0 12px;
+      padding: 0 20px 24px 20px;
       box-sizing: border-box;
     }
 
@@ -218,6 +218,7 @@ def create_email_router(
     button {
       margin-right: 8px;
       margin-top: 8px;
+      margin-bottom: 10px;
       background: var(--button-bg);
       color: var(--button-text);
       border: 0;
@@ -227,6 +228,23 @@ def create_email_router(
     }
 
     button:hover { background: var(--button-hover); }
+    .tabs { display: flex; gap: 8px; margin: 8px 0 14px 0; }
+    .tab-btn { opacity: 0.8; }
+    .tab-btn.active { opacity: 1; outline: 2px solid var(--card-border); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .kv { margin: 4px 0; }
+    .logs {
+      white-space: pre-wrap;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      padding: 10px;
+      max-height: 260px;
+      overflow: auto;
+      font-family: Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
     .muted { color: var(--muted); font-size: 0.9em; }
     .modal-backdrop {
       position: fixed;
@@ -262,21 +280,50 @@ def create_email_router(
   </style>
 </head>
 <body>
-  <h1>Email suggestion inbox</h1>
-  <p class=\"muted\">Genera propuestas desde Gmail, notifícalas por webhook y copia/pega la respuesta final manualmente en Gmail.</p>
+  <h1>Agent Runner</h1>
+  <p class=\"muted\">Monitoriza el agente web en tiempo real y gestiona el agente de correo en una sola interfaz.</p>
 
   <button onclick=\"toggleTheme()\" id=\"themeToggle\">Switch to light mode</button>
-  <button onclick=\"checkNew()\" id=\"checkNewBtn\">Check new messages</button>
-  <button onclick=\"openManualModal()\" id=\"manualBtn\">Generate from text</button>
-  <button onclick=\"loadSuggestions()\">Refresh list</button>
   <p id=\"status\"></p>
-  <div class=\"card\">
-    <h3>Whitelist settings</h3>
-    <p class=\"muted\">One sender per line (or comma-separated). Only these senders generate suggestions.</p>
-    <textarea id=\"allowedWhitelist\" class=\"field\" style=\"min-height:90px\" placeholder=\"info@dextools.io\"></textarea>
-    <button onclick=\"saveSettings()\" id=\"saveSettingsBtn\">Save whitelist</button>
+
+  <div class=\"tabs\">
+    <button id=\"tabWorkdayBtn\" class=\"tab-btn active\" onclick=\"showTab('workday')\">Web Interaction Agent</button>
+    <button id=\"tabEmailBtn\" class=\"tab-btn\" onclick=\"showTab('email')\">Email Agent</button>
   </div>
-  <div id=\"list\"></div>
+
+  <section id=\"tabWorkday\" class=\"tab-panel active\">
+    <div class=\"card\">
+      <h3>Estado en tiempo real</h3>
+      <div id=\"workdayStatusLine\" class=\"kv\">Cargando estado...</div>
+      <div id=\"workdayTimingLine\" class=\"kv muted\"></div>
+      <div id=\"workdayExpected\" class=\"kv muted\"></div>
+      <div id=\"workdayRetryWrap\" style=\"display:none;\">
+        <button onclick=\"retryFailedAction()\" id=\"retryFailedBtn\">Retry failed action now</button>
+      </div>
+    </div>
+    <div class=\"card\">
+      <h3>Historial de pulsaciones (hoy)</h3>
+      <div id=\"workdayClicks\" class=\"muted\">Cargando historial...</div>
+    </div>
+    <div class=\"card\">
+      <h3>Logs runtime (tiempo real)</h3>
+      <div id=\"workdayEvents\" class=\"logs\">Cargando eventos...</div>
+    </div>
+  </section>
+
+  <section id=\"tabEmail\" class=\"tab-panel\">
+    <button onclick=\"checkNew()\" id=\"checkNewBtn\">Check new messages</button>
+    <button onclick=\"openManualModal()\" id=\"manualBtn\">Generate from text</button>
+    <button onclick=\"loadSuggestions()\">Refresh list</button>
+
+    <div class=\"card\">
+      <h3>Whitelist settings</h3>
+      <p class=\"muted\">One sender per line (or comma-separated). Only these senders generate suggestions.</p>
+      <textarea id=\"allowedWhitelist\" class=\"field\" style=\"min-height:90px\" placeholder=\"info@dextools.io\"></textarea>
+      <button onclick=\"saveSettings()\" id=\"saveSettingsBtn\">Save whitelist</button>
+    </div>
+    <div id=\"list\"></div>
+  </section>
 
   <div id=\"suggestionModal\" class=\"modal-backdrop hidden\">
     <div class=\"modal-card\">
@@ -301,22 +348,197 @@ def create_email_router(
   </div>
 
 <script>
+// Base paths para funcionar tanto en local (ip:8099) como en ingress de Home Assistant.
 const currentPath = window.location.pathname.endsWith('/')
   ? window.location.pathname.slice(0, -1)
   : window.location.pathname;
 const apiBase = currentPath.endsWith('/ui') ? currentPath.slice(0, -3) : currentPath;
+const workdayBase = apiBase.endsWith('/email-agent') ? apiBase.slice(0, -12) : '';
 const apiSecret = new URLSearchParams(window.location.search).get('secret') || '';
 const statusEl = document.getElementById('status');
 let currentSuggestionId = '';
+let activeTab = 'workday';
+let workdayPollTimer = null;
 
-function withSecret(path) {
+function withEmailSecret(path) {
   if (!apiSecret) return `${apiBase}${path}`;
   const join = path.includes('?') ? '&' : '?';
   return `${apiBase}${path}${join}secret=${encodeURIComponent(apiSecret)}`;
 }
 
+function withWorkdaySecret(path) {
+  const fullPath = `${workdayBase}${path}`;
+  if (!apiSecret) return fullPath;
+  const join = fullPath.includes('?') ? '&' : '?';
+  return `${fullPath}${join}secret=${encodeURIComponent(apiSecret)}`;
+}
+
 function setStatus(text) {
   statusEl.innerText = text;
+}
+
+function phaseLabel(phase) {
+  const map = {
+    before_start: 'Antes de iniciar',
+    waiting_start: 'Esperando inicio',
+    working_before_break: 'Trabajando antes del descanso',
+    on_break: 'En descanso',
+    working_after_break: 'Trabajando tras descanso',
+    completed: 'Completado',
+    failed: 'Fallido'
+  };
+  return map[String(phase || '').trim()] || String(phase || 'unknown');
+}
+
+function clickLabel(name) {
+  const map = {
+    start_click: 'Inicio jornada',
+    start_break_click: 'Inicio descanso',
+    stop_break_click: 'Fin descanso',
+    final_click: 'Fin jornada'
+  };
+  return map[String(name || '').trim()] || String(name || 'click');
+}
+
+function showTab(name) {
+  activeTab = name;
+  const isWorkday = name === 'workday';
+  document.getElementById('tabWorkday').classList.toggle('active', isWorkday);
+  document.getElementById('tabEmail').classList.toggle('active', !isWorkday);
+  document.getElementById('tabWorkdayBtn').classList.toggle('active', isWorkday);
+  document.getElementById('tabEmailBtn').classList.toggle('active', !isWorkday);
+  if (isWorkday) {
+    refreshWorkdayPanel();
+  } else {
+    loadSettings();
+    loadSuggestions();
+  }
+}
+
+function formatDuration(totalSeconds) {
+  const sec = Math.max(0, Number(totalSeconds || 0));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function formatTs(value) {
+  if (!value) return '-';
+  if (typeof value === 'number') return new Date(value * 1000).toLocaleTimeString();
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString();
+}
+
+async function refreshWorkdayPanel() {
+  await Promise.all([loadWorkdayStatus(), loadWorkdayHistory(), loadWorkdayEvents()]);
+}
+
+async function loadWorkdayStatus() {
+  try {
+    const r = await fetch(withWorkdaySecret('/status'));
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    const phase = String(data.phase || 'unknown');
+    const phaseText = phaseLabel(phase);
+    const message = String(data.message || '');
+    document.getElementById('workdayStatusLine').innerHTML = `<b>Fase:</b> ${escapeHtml(phaseText)}<br/><b>Estado:</b> ${escapeHtml(message)}`;
+
+    const timingParts = [];
+    if (typeof data.elapsed_seconds === 'number') {
+      timingParts.push(`Tiempo transcurrido: ${formatDuration(data.elapsed_seconds)}`);
+    }
+    if (typeof data.remaining_seconds === 'number') {
+      timingParts.push(`Tiempo restante: ${formatDuration(data.remaining_seconds)}`);
+    }
+    document.getElementById('workdayTimingLine').innerText = timingParts.length
+      ? timingParts.join(' | ')
+      : 'Sin temporizador activo en este momento.';
+
+    const expected = [];
+    if (phase === 'before_start') {
+      expected.push('Ventana de inicio: 06:57 - 08:31');
+    }
+    if (phase === 'waiting_start' && data.planned_first_ts) {
+      expected.push(`Primer click previsto: ${formatTs(data.planned_first_ts)}`);
+    }
+    if (data.planned_start_break_ts) expected.push(`Expected break start: ${formatTs(data.planned_start_break_ts)}`);
+    if (data.planned_stop_break_ts) expected.push(`Expected break end: ${formatTs(data.planned_stop_break_ts)}`);
+    if (data.planned_final_ts) expected.push(`Expected final click: ${formatTs(data.planned_final_ts)}`);
+    if (!expected.length && phase === 'completed' && data.ok) {
+      expected.push('Jornada finalizada correctamente.');
+    }
+    document.getElementById('workdayExpected').innerText = expected.join(' | ');
+
+    const retryWrap = document.getElementById('workdayRetryWrap');
+    const retryable = phase === 'failed' && !!String(data.failed_phase || '').trim();
+    retryWrap.style.display = retryable ? 'block' : 'none';
+  } catch (err) {
+    document.getElementById('workdayStatusLine').innerText = `Error loading workday status: ${err}`;
+  }
+}
+
+async function loadWorkdayHistory() {
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const r = await fetch(withWorkdaySecret(`/history?day=${today}`));
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    const box = document.getElementById('workdayClicks');
+    if (!Array.isArray(data.items) || data.items.length === 0) {
+      box.innerHTML = '<span class="muted">No hay pulsaciones registradas hoy.</span>';
+      return;
+    }
+    box.innerHTML = data.items.map((item) => {
+      const ok = item.ok ? 'OK' : 'ERROR';
+      const when = item.executed_at || item.ts || '';
+      return `<div class="kv"><b>${escapeHtml(clickLabel(item.click_name || 'click'))}</b> - ${escapeHtml(ok)} - ${escapeHtml(formatTs(when))}${item.recovered ? ' (recovered)' : ''}</div>`;
+    }).join('');
+  } catch (err) {
+    document.getElementById('workdayClicks').innerText = `Error loading history: ${err}`;
+  }
+}
+
+async function loadWorkdayEvents() {
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const r = await fetch(withWorkdaySecret(`/events?limit=120&day=${today}`));
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    const lines = Array.isArray(data.items) ? data.items.map((item) => {
+      const ts = formatTs(item.ts || '');
+      const ev = item.event || '';
+      const phase = phaseLabel(item.phase || '');
+      const run = item.run_id || '';
+      return `[${ts}] ${ev} phase=${phase} run=${run}`;
+    }) : [];
+    document.getElementById('workdayEvents').innerText = lines.length ? lines.join('\\n') : 'No runtime events yet.';
+  } catch (err) {
+    document.getElementById('workdayEvents').innerText = `Error loading events: ${err}`;
+  }
+}
+
+async function retryFailedAction() {
+  const btn = document.getElementById('retryFailedBtn');
+  const oldText = btn.innerText;
+  btn.disabled = true;
+  btn.innerText = 'Retrying...';
+  setStatus('Retrying failed workday action...');
+  try {
+    const r = await fetch(withWorkdaySecret('/retry-failed'), { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    setStatus('Retry command executed');
+    await refreshWorkdayPanel();
+  } catch (err) {
+    setStatus(`Retry failed: ${err}`);
+  } finally {
+    btn.disabled = false;
+    btn.innerText = oldText;
+  }
 }
 
 async function checkNew() {
@@ -326,7 +548,7 @@ async function checkNew() {
   btn.innerText = 'Checking new messages...';
   setStatus('Checking new messages...');
   try {
-    const r = await fetch(withSecret('/check-new'), {
+    const r = await fetch(withEmailSecret('/check-new'), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({max_emails: 5, unread_only: true, mailbox: 'INBOX'})
@@ -359,7 +581,7 @@ function closeSuggestionModal() {
 
 async function submitRegenerate() {
   const area = document.getElementById('suggestionInstruction');
-  const instruction = area.value.trim();
+    const instruction = area.value.trim();
   if (!instruction || !currentSuggestionId) return;
   const btn = document.getElementById('submitRegenerateBtn');
   const oldText = btn.innerText;
@@ -368,7 +590,7 @@ async function submitRegenerate() {
   setStatus('Suggestion received');
   setStatus('Creating new response based on suggestion...');
   try {
-    const r = await fetch(withSecret(`/suggestions/${currentSuggestionId}/regenerate`), {
+    const r = await fetch(withEmailSecret(`/suggestions/${currentSuggestionId}/regenerate`), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({instruction})
@@ -407,7 +629,7 @@ function parseWhitelistInput(raw) {
 
 async function loadSettings() {
   try {
-    const r = await fetch(withSecret('/settings'));
+    const r = await fetch(withEmailSecret('/settings'));
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
     const settings = (data && data.settings) ? data.settings : {};
@@ -429,7 +651,7 @@ async function saveSettings() {
     document.getElementById('allowedWhitelist').value
   );
   try {
-    const r = await fetch(withSecret('/settings'), {
+    const r = await fetch(withEmailSecret('/settings'), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({allowed_from_whitelist})
@@ -465,7 +687,7 @@ async function submitManualSuggestion() {
   setStatus('Email text received');
   setStatus('Creating new response based on provided email text...');
   try {
-    const r = await fetch(withSecret('/suggestions/manual'), {
+    const r = await fetch(withEmailSecret('/suggestions/manual'), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({from_text: fromText, subject, body})
@@ -487,7 +709,7 @@ async function submitManualSuggestion() {
 }
 
 async function markStatus(id, status) {
-  await fetch(withSecret(`/suggestions/${id}/status`), {
+  await fetch(withEmailSecret(`/suggestions/${id}/status`), {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({status})
@@ -556,7 +778,7 @@ function escapeHtml(value) {
 async function loadSuggestions() {
   let data;
   try {
-    const r = await fetch(withSecret('/suggestions'));
+    const r = await fetch(withEmailSecret('/suggestions'));
     data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
   } catch (err) {
@@ -594,8 +816,12 @@ async function loadSuggestions() {
   }
 }
 
-loadSettings();
-loadSuggestions();
+showTab('workday');
+if (workdayPollTimer) clearInterval(workdayPollTimer);
+// Polling ligero para tener feedback en tiempo real sin recargar toda la página.
+workdayPollTimer = setInterval(() => {
+  if (activeTab === 'workday') refreshWorkdayPanel();
+}, 10000);
 </script>
 </body>
 </html>

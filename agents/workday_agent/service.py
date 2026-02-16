@@ -166,6 +166,89 @@ class WorkdayAgentService:
         phase = str(self._get_runtime_state().get("phase", "before_start"))
         return phase in self.ACTIVE_PHASES
 
+    def get_runtime_events(self, limit: int = 200, day: str = "") -> Dict[str, Any]:
+        # Devuelve eventos recientes desde el jsonl de runtime para alimentar UI/diagnóstico.
+        if not self.runtime_events_path.exists():
+            return {"ok": True, "count": 0, "items": []}
+        try:
+            lines = self.runtime_events_path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            self.logger.exception("No se pudo leer runtime events")
+            return {"ok": False, "count": 0, "items": []}
+
+        items: list[Dict[str, Any]] = []
+        day_prefix = (day or "").strip()
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except Exception:
+                continue
+            if day_prefix:
+                ts = str(item.get("ts", ""))
+                if not ts.startswith(day_prefix):
+                    continue
+            items.append(item)
+
+        items = items[-max(1, min(limit, 1000)) :]
+        return {"ok": True, "count": len(items), "items": items}
+
+    def get_daily_click_history(self, day: str = "") -> Dict[str, Any]:
+        # Filtra solo eventos de click webhook para mostrar el historial diario de pulsaciones.
+        target_day = day.strip() or datetime.now().strftime("%Y-%m-%d")
+        events = self.get_runtime_events(limit=1000, day=target_day)
+        if not events.get("ok"):
+            return {"ok": False, "day": target_day, "count": 0, "items": []}
+
+        clicks: list[Dict[str, Any]] = []
+        for item in events.get("items", []):
+            if item.get("event") != "click_webhook_sent":
+                continue
+            meta = item.get("meta", {})
+            payload_meta = meta.get("meta", {}) if isinstance(meta, dict) else {}
+            clicks.append(
+                {
+                    "ts": item.get("ts"),
+                    "run_id": item.get("run_id"),
+                    "phase": item.get("phase"),
+                    "click_name": meta.get("click_name"),
+                    "ok": meta.get("ok"),
+                    "executed_at": payload_meta.get("executed_at", ""),
+                    "scheduled_at": payload_meta.get("scheduled_at", ""),
+                    "recovered": bool(payload_meta.get("recovered", False)),
+                }
+            )
+
+        return {"ok": True, "day": target_day, "count": len(clicks), "items": clicks}
+
+    def retry_failed_action(self) -> Dict[str, Any]:
+        # Reintenta el último estado fallido restaurando la fase activa previa al error.
+        state = self._get_runtime_state()
+        if str(state.get("phase", "")) != "failed":
+            raise RuntimeError("No hay una ejecución fallida para reintentar")
+
+        failed_phase = str(state.get("failed_phase", "")).strip()
+        if failed_phase not in self.ACTIVE_PHASES:
+            raise RuntimeError("El fallo no es reintentable automáticamente")
+
+        self._set_runtime_state(
+            failed_phase,
+            "Reintento manual solicitado",
+            run_id=state.get("run_id", ""),
+            job=state.get("job", "workday_flow"),
+            ok=None,
+            planned_first_ts=state.get("planned_first_ts"),
+            first_click_ts=state.get("first_click_ts"),
+            planned_start_break_ts=state.get("planned_start_break_ts"),
+            start_break_ts=state.get("start_break_ts"),
+            planned_stop_break_ts=state.get("planned_stop_break_ts"),
+            stop_break_ts=state.get("stop_break_ts"),
+            planned_final_ts=state.get("planned_final_ts"),
+            retry_requested_at=datetime.now().isoformat(),
+        )
+        return self.resume_pending_flow()
+
     @staticmethod
     def _sleep_until(target_ts: float):
         remaining_log = None
@@ -619,6 +702,8 @@ class WorkdayAgentService:
 
         except Exception as err:
             self.logger.exception("Error reanudando job=%s run_id=%s", job_name, run_id)
+            prev_phase = str(self._get_runtime_state().get("phase", ""))
+            retry_phase = prev_phase if prev_phase in self.ACTIVE_PHASES else ""
             if page is not None:
                 try:
                     page.screenshot(path=str(run_dir / "recovered_failed.png"), full_page=True)
@@ -641,6 +726,7 @@ class WorkdayAgentService:
                 job=job_name,
                 ok=False,
                 error=str(err),
+                failed_phase=retry_phase,
             )
             self.send_status(job_name, run_id, "error", f"Error en reanudación: {err}", ok=False)
             self.send_final(job_name, run_id, result)
@@ -919,6 +1005,8 @@ class WorkdayAgentService:
 
             except Exception as err:
                 self.logger.exception("Error en ejecución job=%s run_id=%s", job_name, run_id)
+                prev_phase = str(self._get_runtime_state().get("phase", ""))
+                retry_phase = prev_phase if prev_phase in self.ACTIVE_PHASES else ""
                 try:
                     snap("failed")
                 except Exception:
@@ -937,6 +1025,7 @@ class WorkdayAgentService:
                     job=job_name,
                     ok=False,
                     error=str(err),
+                    failed_phase=retry_phase,
                 )
                 self.send_status(job_name, run_id, "error", f"Error en ejecución: {err}", ok=False)
                 self.send_final(job_name, run_id, result)

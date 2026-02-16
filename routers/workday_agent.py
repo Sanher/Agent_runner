@@ -1,6 +1,6 @@
 from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from agents.workday_agent.service import WorkdayAgentService
@@ -45,14 +45,47 @@ def create_workday_router(
         run_id = req.run_id or service.now_id()
         return runner(job_name=job_name, supervision=req.supervision, run_id=run_id)
 
+    def ensure_auth(request: Request) -> None:
+        if not job_secret:
+            return
+        provided = (
+            request.headers.get("x-job-secret", "").strip()
+            or request.query_params.get("secret", "").strip()
+        )
+        if provided != job_secret:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
     @router.get("/jobs")
-    def list_jobs():
+    def list_jobs(request: Request):
         """Lista jobs disponibles en el agente web."""
+        ensure_auth(request)
         return {"jobs": sorted(runners.keys())}
 
     @router.get("/status")
-    def status():
+    def status(request: Request):
         """Devuelve estado en tiempo real del flujo workday."""
+        ensure_auth(request)
         return service.get_status()
+
+    @router.get("/events")
+    def events(request: Request, limit: int = 200, day: str = ""):
+        """Devuelve eventos runtime del agente workday (jsonl persistido)."""
+        ensure_auth(request)
+        return service.get_runtime_events(limit=limit, day=day)
+
+    @router.get("/history")
+    def history(request: Request, day: str = ""):
+        """Devuelve historial diario de pulsaciones/clicks del agente workday."""
+        ensure_auth(request)
+        return service.get_daily_click_history(day=day)
+
+    @router.post("/retry-failed")
+    def retry_failed(request: Request):
+        """Reintenta automáticamente la acción fallida más reciente (si aplica)."""
+        ensure_auth(request)
+        try:
+            return service.retry_failed_action()
+        except RuntimeError as err:
+            raise HTTPException(status_code=400, detail=str(err)) from err
 
     return router
