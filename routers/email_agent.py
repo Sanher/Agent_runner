@@ -48,8 +48,16 @@ def create_email_router(
                 detail=f"Email config inválida. Faltan: {', '.join(sorted(missing))}",
             )
 
+    def _is_ingress_request(request: Request) -> bool:
+        # Home Assistant Ingress añade este header al proxyar la petición al add-on.
+        return bool(request.headers.get("x-ingress-path", "").strip())
+
     def ensure_auth(request: Request) -> None:
         if not job_secret:
+            return
+        # En Ingress ya existe autenticación previa de Home Assistant.
+        # Evita errores cuando el proxy no conserva query params como `?secret=...`.
+        if _is_ingress_request(request):
             return
         provided = (
             request.headers.get("x-job-secret", "").strip()
