@@ -101,6 +101,9 @@ Notas:
 - El scheduler interno lanza `workday_flow` automáticamente en weekdays cuando la config obligatoria está completa.
 - La ventana de arranque automático se evalúa entre `06:57` y `08:31` (hora local de `WORKDAY_TIMEZONE`).
 - Si falta configuración obligatoria, el scheduler no ejecuta y `POST /run/{job_name}` devuelve `400`.
+- El estado runtime de `workday_agent` se persiste en `/data/workday_runtime_state.json`.
+- Los eventos runtime se registran en `/data/workday_runtime_events.jsonl`.
+- Si el add-on se reinicia durante una ejecución activa, al arrancar intenta reanudar desde la fase guardada.
 
 ### Agente de correo
 

@@ -1,9 +1,11 @@
+import json
 import random
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from playwright.sync_api import sync_playwright
@@ -14,6 +16,7 @@ AGENT_NAME = "workday_agent"
 
 class WorkdayAgentService:
     """Agente para automatización web de fichaje en jornada laboral."""
+    ACTIVE_PHASES = {"waiting_start", "working_before_break", "on_break", "working_after_break"}
 
     def __init__(
         self,
@@ -36,7 +39,14 @@ class WorkdayAgentService:
         self.logger = logger
         self._run_lock = threading.Lock()
         self._status_lock = threading.Lock()
-        self._runtime_state: Dict[str, Any] = {
+        self.runtime_state_path = self.data_dir / "workday_runtime_state.json"
+        self.runtime_events_path = self.data_dir / "workday_runtime_events.jsonl"
+        self._runtime_state: Dict[str, Any] = self._load_runtime_state()
+        self._debug("Servicio inicializado", phase=self._runtime_state.get("phase", "before_start"))
+
+    @staticmethod
+    def _default_runtime_state() -> Dict[str, Any]:
+        return {
             "phase": "before_start",
             "message": "Pendiente de inicio",
             "run_id": "",
@@ -44,7 +54,44 @@ class WorkdayAgentService:
             "updated_at": datetime.now().isoformat(),
             "ok": None,
         }
-        self._debug("Servicio inicializado")
+
+    def _load_runtime_state(self) -> Dict[str, Any]:
+        if not self.runtime_state_path.exists():
+            return self._default_runtime_state()
+        try:
+            data = json.loads(self.runtime_state_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                base = self._default_runtime_state()
+                return {**base, **data}
+        except Exception:
+            self.logger.exception("No se pudo leer estado runtime persistido")
+        return self._default_runtime_state()
+
+    def _persist_runtime_state(self, state: Dict[str, Any]) -> None:
+        try:
+            self.runtime_state_path.parent.mkdir(parents=True, exist_ok=True)
+            self.runtime_state_path.write_text(
+                json.dumps(state, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            self.logger.exception("No se pudo persistir estado runtime")
+
+    def _append_runtime_event(self, event: str, **meta: Any) -> None:
+        item = {
+            "ts": datetime.now().isoformat(),
+            "event": event,
+            "phase": meta.get("phase"),
+            "run_id": meta.get("run_id"),
+            "job": meta.get("job"),
+            "meta": meta,
+        }
+        try:
+            self.runtime_events_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.runtime_events_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(item, ensure_ascii=False) + "\n")
+        except Exception:
+            self.logger.exception("No se pudo guardar evento runtime")
 
     @staticmethod
     def _now_text() -> str:
@@ -52,7 +99,17 @@ class WorkdayAgentService:
 
     def _debug(self, message: str, **meta: Any) -> None:
         suffix = " | "+", ".join(f"{k}={v}" for k,v in meta.items()) if meta else ""
-        self.logger.info(f"[DEBUG][{AGENT_NAME}] {message} | hora_texto={self._now_text()}{suffix}")
+        self.logger.debug(f"[DEBUG][{AGENT_NAME}] {message} | hora_texto={self._now_text()}{suffix}")
+
+    @staticmethod
+    def _sanitize_url_for_log(raw_url: str) -> str:
+        if not raw_url:
+            return raw_url
+        try:
+            parts = urlsplit(raw_url)
+            return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+        except Exception:
+            return raw_url
 
     @staticmethod
     def now_id() -> str:
@@ -69,6 +126,16 @@ class WorkdayAgentService:
                 "updated_at": datetime.now().isoformat(),
                 **meta,
             }
+            state_copy = dict(self._runtime_state)
+        self._persist_runtime_state(state_copy)
+        self._append_runtime_event(
+            "state_transition",
+            phase=phase,
+            message=message,
+            run_id=state_copy.get("run_id", ""),
+            job=state_copy.get("job", "workday_flow"),
+            ok=state_copy.get("ok"),
+        )
 
     def _get_runtime_state(self) -> Dict[str, Any]:
         with self._status_lock:
@@ -78,6 +145,26 @@ class WorkdayAgentService:
         d = self.data_dir / "runs" / job / run_id
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        try:
+            if value is None:
+                return default
+            return float(value)
+        except Exception:
+            return default
+
+    @staticmethod
+    def _same_local_day(ts_a: float, ts_b: float) -> bool:
+        try:
+            return datetime.fromtimestamp(ts_a).date() == datetime.fromtimestamp(ts_b).date()
+        except Exception:
+            return False
+
+    def has_active_run(self) -> bool:
+        phase = str(self._get_runtime_state().get("phase", "before_start"))
+        return phase in self.ACTIVE_PHASES
 
     @staticmethod
     def _sleep_until(target_ts: float):
@@ -134,6 +221,14 @@ class WorkdayAgentService:
         log_fn = self.logger.info if result.get("ok") else self.logger.error
         log_fn("Resultado final %s/%s: %s", job_name, run_id, payload["message"])
         self._post_webhook(self.webhook_final_url, payload)
+        self._append_runtime_event(
+            "final_webhook_sent",
+            phase=self._get_runtime_state().get("phase"),
+            run_id=run_id,
+            job=job_name,
+            ok=payload["ok"],
+            message=payload["message"],
+        )
 
     def send_click_webhook(
         self,
@@ -153,6 +248,15 @@ class WorkdayAgentService:
             "meta": meta or {},
         }
         self._post_webhook(url, payload)
+        self._append_runtime_event(
+            "click_webhook_sent",
+            phase=self._get_runtime_state().get("phase"),
+            run_id=run_id,
+            job=job_name,
+            ok=ok,
+            click_name=click_name,
+            meta=meta or {},
+        )
 
     @staticmethod
     def _fmt_duration(seconds: int) -> str:
@@ -268,6 +372,294 @@ class WorkdayAgentService:
                 continue
         return False
 
+    def resume_pending_flow(self) -> Dict[str, Any]:
+        """Reanuda una ejecución de workday en curso usando el estado persistido."""
+        state = self._get_runtime_state()
+        phase = str(state.get("phase", "before_start"))
+        if phase not in self.ACTIVE_PHASES:
+            return {"ok": True, "resumed": False, "phase": phase, "reason": "phase_not_active"}
+
+        job_name = str(state.get("job", "workday_flow") or "workday_flow")
+        run_id = str(state.get("run_id", "") or f"recover-{self.now_id()}")
+
+        if not self._run_lock.acquire(blocking=False):
+            return {"ok": False, "resumed": False, "phase": phase, "reason": "busy"}
+
+        self._debug("Reanudando flujo persistido", phase=phase, run_id=run_id, job_name=job_name)
+        run_dir = self._artifact_dir(job_name, run_id)
+        storage_path = self.data_dir / "storage" / f"{job_name}.json"
+        storage_path.parent.mkdir(parents=True, exist_ok=True)
+        self._append_runtime_event(
+            "resume_start",
+            phase=phase,
+            run_id=run_id,
+            job=job_name,
+            planned_from_state=True,
+        )
+        first_end_ts = self._today_at(8, 31).timestamp()
+
+        browser = None
+        context = None
+        page = None
+
+        try:
+            now_ts = time.time()
+            first_click_ts = self._safe_float(state.get("first_click_ts"))
+            planned_first_ts = self._safe_float(state.get("planned_first_ts"))
+            start_break_ts = self._safe_float(state.get("start_break_ts"))
+            stop_break_ts = self._safe_float(state.get("stop_break_ts"))
+
+            anchor_ts = first_click_ts if first_click_ts > 0 else planned_first_ts
+            if anchor_ts > 0 and not self._same_local_day(anchor_ts, now_ts):
+                raise RuntimeError("Estado persistido obsoleto: corresponde a otro día")
+
+            if phase == "waiting_start":
+                if planned_first_ts <= 0:
+                    raise RuntimeError("Estado persistido inválido: falta planned_first_ts")
+                if planned_first_ts > first_end_ts + 300:
+                    raise RuntimeError("Estado persistido inválido: planned_first_ts fuera de ventana")
+                if now_ts > first_end_ts + 300:
+                    raise RuntimeError("Ventana de inicio vencida; no se reanuda automáticamente")
+
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                context_kwargs: Dict[str, Any] = {}
+                if storage_path.exists():
+                    context_kwargs["storage_state"] = str(storage_path)
+                    self.logger.info("Reanudación: reutilizando storage_state desde %s", storage_path)
+
+                context = browser.new_context(**context_kwargs)
+                page = context.new_page()
+
+                def snap(tag: str):
+                    page.screenshot(path=str(run_dir / f"{tag}.png"), full_page=True)
+                    (run_dir / f"{tag}.html").write_text(page.content(), encoding="utf-8")
+                    self.logger.info("Snapshot guardado: %s", tag)
+
+                def open_target():
+                    if not self.target_url:
+                        raise RuntimeError("Falta target_url en la configuración del add-on")
+                    page.goto(self.target_url, wait_until="domcontentloaded", timeout=60_000)
+                    self._dismiss_cookie_popup(page)
+                    self._dismiss_location_prompt(page)
+
+                if phase == "waiting_start":
+                    self._sleep_until(planned_first_ts)
+                    if time.time() > first_end_ts + 300:
+                        raise RuntimeError("Reanudación fuera de ventana de inicio")
+                    open_target()
+                    context.storage_state(path=str(storage_path))
+                    self.logger.info("Reanudación: storage_state actualizado en %s", storage_path)
+                    self._click_icon_button(page, "Icon-play")
+                    first_click_ts = time.time()
+                    executed_at = datetime.now().isoformat()
+                    self.send_status(job_name, run_id, "first_click", "Reanudación: pulsado inicio (Icon-play)")
+                    self.send_click_webhook(
+                        self.webhook_start_url,
+                        job_name=job_name,
+                        run_id=run_id,
+                        click_name="start_click",
+                        ok=True,
+                        meta={"executed_at": executed_at, "recovered": True},
+                    )
+                    snap("recovered_first_click")
+                    second_click_ts = self._safe_float(state.get("planned_start_break_ts"))
+                    if second_click_ts <= 0:
+                        second_min = first_click_ts + (4 * 3600)
+                        second_max = first_click_ts + (4 * 3600) + (45 * 60)
+                        second_click_ts = random.uniform(second_min, second_max)
+                    self._set_runtime_state(
+                        "working_before_break",
+                        "Jornada iniciada (reanudada)",
+                        run_id=run_id,
+                        job=job_name,
+                        ok=None,
+                        first_click_ts=first_click_ts,
+                        planned_start_break_ts=second_click_ts,
+                    )
+                    phase = "working_before_break"
+
+                if phase == "working_before_break":
+                    if first_click_ts <= 0:
+                        raise RuntimeError("No hay first_click_ts para reanudar start_break")
+                    second_click_ts = self._safe_float(state.get("planned_start_break_ts"))
+                    if second_click_ts <= 0:
+                        second_min = first_click_ts + (4 * 3600)
+                        second_max = first_click_ts + (4 * 3600) + (45 * 60)
+                        second_click_ts = random.uniform(second_min, second_max)
+                    self._sleep_until(second_click_ts)
+                    open_target()
+                    self._click_icon_button(page, "Icon-pause")
+                    start_break_at = datetime.now().isoformat()
+                    self.send_status(job_name, run_id, "start_break_click", "Reanudación: pulsado start break")
+                    self.send_click_webhook(
+                        self.webhook_start_break_url,
+                        job_name=job_name,
+                        run_id=run_id,
+                        click_name="start_break_click",
+                        ok=True,
+                        meta={
+                            "scheduled_at": datetime.fromtimestamp(second_click_ts).isoformat(),
+                            "executed_at": start_break_at,
+                            "recovered": True,
+                        },
+                    )
+                    snap("recovered_start_break_click")
+                    start_break_ts = datetime.fromisoformat(start_break_at).timestamp()
+                    third_click_ts = self._safe_float(state.get("planned_stop_break_ts"))
+                    if third_click_ts <= 0:
+                        third_min = time.time() + (14 * 60) + 30
+                        third_max = time.time() + (15 * 60) + 59
+                        third_click_ts = random.uniform(third_min, third_max)
+                    self._set_runtime_state(
+                        "on_break",
+                        "En descanso (reanudado)",
+                        run_id=run_id,
+                        job=job_name,
+                        ok=None,
+                        first_click_ts=first_click_ts,
+                        start_break_ts=start_break_ts,
+                        planned_stop_break_ts=third_click_ts,
+                    )
+                    phase = "on_break"
+
+                if phase == "on_break":
+                    if first_click_ts <= 0 or start_break_ts <= 0:
+                        raise RuntimeError("No hay timestamps previos para reanudar stop_break")
+                    third_click_ts = self._safe_float(state.get("planned_stop_break_ts"))
+                    if third_click_ts <= 0:
+                        third_click_ts = time.time() + 15
+                    self._sleep_until(third_click_ts)
+                    open_target()
+                    self._click_icon_button(page, "Icon-play")
+                    stop_break_at = datetime.now().isoformat()
+                    break_gap_seconds = max(
+                        0,
+                        int(datetime.fromisoformat(stop_break_at).timestamp() - start_break_ts),
+                    )
+                    self.send_status(job_name, run_id, "stop_break_click", "Reanudación: pulsado stop break")
+                    self.send_click_webhook(
+                        self.webhook_stop_break_url,
+                        job_name=job_name,
+                        run_id=run_id,
+                        click_name="stop_break_click",
+                        ok=True,
+                        meta={
+                            "scheduled_at": datetime.fromtimestamp(third_click_ts).isoformat(),
+                            "executed_at": stop_break_at,
+                            "gap_seconds_from_start_break": break_gap_seconds,
+                            "gap_minutes_from_start_break": round(break_gap_seconds / 60, 2),
+                            "recovered": True,
+                        },
+                    )
+                    snap("recovered_stop_break_click")
+                    stop_break_ts = datetime.fromisoformat(stop_break_at).timestamp()
+                    final_ts = self._safe_float(state.get("planned_final_ts"))
+                    if final_ts <= 0:
+                        final_earliest = first_click_ts + (7 * 3600)
+                        final_latest = first_click_ts + (7 * 3600) + (45 * 60)
+                        final_ts = random.uniform(final_earliest, final_latest)
+                    self._set_runtime_state(
+                        "working_after_break",
+                        "Tramo final (reanudado)",
+                        run_id=run_id,
+                        job=job_name,
+                        ok=None,
+                        first_click_ts=first_click_ts,
+                        start_break_ts=start_break_ts,
+                        stop_break_ts=stop_break_ts,
+                        planned_final_ts=final_ts,
+                    )
+                    phase = "working_after_break"
+
+                if phase == "working_after_break":
+                    if first_click_ts <= 0:
+                        raise RuntimeError("No hay first_click_ts para reanudar click final")
+                    final_ts = self._safe_float(state.get("planned_final_ts"))
+                    if final_ts <= 0:
+                        final_earliest = first_click_ts + (7 * 3600)
+                        final_latest = first_click_ts + (7 * 3600) + (45 * 60)
+                        final_ts = random.uniform(final_earliest, final_latest)
+                    self._sleep_until(final_ts)
+                    open_target()
+                    self._click_icon_button(page, "Icon-stop")
+                    self.send_status(job_name, run_id, "final_click", "Reanudación: pulsado fin de jornada")
+                    snap("recovered_final_click")
+                    final_click_ts = time.time()
+                    result = {
+                        "ok": True,
+                        "job": job_name,
+                        "run_id": run_id,
+                        "url": page.url,
+                        "data_dir": str(self.data_dir),
+                        "recovered": True,
+                    }
+                    self._set_runtime_state(
+                        "completed",
+                        "Jornada completada (reanudada)",
+                        run_id=run_id,
+                        job=job_name,
+                        ok=True,
+                        first_click_ts=first_click_ts,
+                        start_break_ts=start_break_ts,
+                        stop_break_ts=stop_break_ts,
+                        final_click_ts=final_click_ts,
+                    )
+                    self.send_final(job_name, run_id, result)
+                    self._append_runtime_event(
+                        "resume_completed",
+                        phase="completed",
+                        run_id=run_id,
+                        job=job_name,
+                        ok=True,
+                    )
+                    return {"ok": True, "resumed": True, "phase": "completed", "run_id": run_id}
+
+                return {"ok": True, "resumed": False, "phase": phase, "run_id": run_id}
+
+        except Exception as err:
+            self.logger.exception("Error reanudando job=%s run_id=%s", job_name, run_id)
+            if page is not None:
+                try:
+                    page.screenshot(path=str(run_dir / "recovered_failed.png"), full_page=True)
+                    (run_dir / "recovered_failed.html").write_text(page.content(), encoding="utf-8")
+                    self.logger.info("Snapshot guardado: recovered_failed")
+                except Exception:
+                    self.logger.exception("No se pudo guardar snapshot en reanudación fallida")
+            result = {
+                "ok": False,
+                "job": job_name,
+                "run_id": run_id,
+                "error": str(err),
+                "url": page.url if page is not None else "",
+                "recovered": True,
+            }
+            self._set_runtime_state(
+                "failed",
+                "Jornada con error en reanudación",
+                run_id=run_id,
+                job=job_name,
+                ok=False,
+                error=str(err),
+            )
+            self.send_status(job_name, run_id, "error", f"Error en reanudación: {err}", ok=False)
+            self.send_final(job_name, run_id, result)
+            return {"ok": False, "resumed": True, "phase": "failed", "run_id": run_id, "error": str(err)}
+
+        finally:
+            if context is not None:
+                try:
+                    context.close()
+                except Exception:
+                    self.logger.exception("Error cerrando contexto Playwright en reanudación")
+            if browser is not None:
+                try:
+                    browser.close()
+                except Exception:
+                    self.logger.exception("Error cerrando browser Playwright en reanudación")
+            self.logger.info("Recursos Playwright cerrados tras reanudación job=%s run_id=%s", job_name, run_id)
+            self._run_lock.release()
+
     def run_workday_flow(self, job_name: str, supervision: bool, run_id: str) -> Dict[str, Any]:
         if not self._run_lock.acquire(blocking=False):
             result = {
@@ -345,7 +737,7 @@ class WorkdayAgentService:
                 if not self.target_url:
                     raise RuntimeError("Falta target_url en la configuración del add-on")
 
-                self.logger.info("Abriendo URL objetivo: %s", self.target_url)
+                self.logger.info("Abriendo URL objetivo: %s", self._sanitize_url_for_log(self.target_url))
                 page.goto(self.target_url, wait_until="domcontentloaded", timeout=60_000)
                 self._dismiss_cookie_popup(page)
                 self._dismiss_location_prompt(page)

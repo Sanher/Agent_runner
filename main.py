@@ -58,8 +58,11 @@ def _load_addon_options() -> Dict[str, Any]:
         options = json.loads(options_path.read_text(encoding="utf-8"))
         logger.info("Opciones del add-on cargadas desde %s", options_path)
         return options
+    except json.JSONDecodeError:
+        logger.warning("options.json inválido; se usarán valores por defecto")
+        return {}
     except Exception:
-        logger.exception("No se pudo parsear %s; se usarán valores por defecto", options_path)
+        logger.exception("No se pudo leer %s; se usarán valores por defecto", options_path)
         return {}
 
 
@@ -250,6 +253,7 @@ def _save_scheduler_state(state: Dict[str, Any]) -> None:
 def _workday_scheduler_loop() -> None:
     logger.info("Scheduler interno workday iniciado")
     last_invalid_signature = ""
+    last_active_phase = ""
     while True:
         missing = _workday_missing_required_config()
         if missing:
@@ -261,6 +265,18 @@ def _workday_scheduler_loop() -> None:
             continue
 
         last_invalid_signature = ""
+        if workday_service.has_active_run():
+            active_phase = str(workday_service.get_status().get("phase", ""))
+            if active_phase != last_active_phase:
+                logger.info(
+                    "Scheduler workday en espera por ejecución activa (phase=%s)",
+                    active_phase,
+                )
+                last_active_phase = active_phase
+            time.sleep(30)
+            continue
+
+        last_active_phase = ""
         now = datetime.now()
         # Weekdays: lunes(0) a viernes(4)
         if now.weekday() <= 4:
@@ -285,6 +301,32 @@ def _workday_scheduler_loop() -> None:
                 except Exception:
                     logger.exception("Fallo no controlado en ejecución automática workday")
         time.sleep(30)
+
+
+def _workday_recovery_loop() -> None:
+    logger.info("Recovery workday iniciado")
+    last_invalid_signature = ""
+    while True:
+        if not workday_service.has_active_run():
+            logger.info("Recovery workday: no hay ejecución pendiente de reanudar")
+            return
+
+        missing = _workday_missing_required_config()
+        if missing:
+            signature = ",".join(sorted(missing))
+            if signature != last_invalid_signature:
+                logger.error("Recovery workday bloqueado. Faltan: %s", signature)
+                last_invalid_signature = signature
+            time.sleep(60)
+            continue
+
+        last_invalid_signature = ""
+        result = workday_service.resume_pending_flow()
+        logger.info("Recovery workday resultado: %s", result)
+        if result.get("reason") == "busy":
+            time.sleep(15)
+            continue
+        return
 
 
 def _email_scheduler_loop() -> None:
@@ -321,6 +363,12 @@ def _email_scheduler_loop() -> None:
 
 @APP.on_event("startup")
 def _on_startup() -> None:
+    recovery_thread = threading.Thread(
+        target=_workday_recovery_loop,
+        name="workday-recovery",
+        daemon=True,
+    )
+    recovery_thread.start()
     thread = threading.Thread(
         target=_workday_scheduler_loop,
         name="workday-scheduler",
@@ -365,6 +413,9 @@ def health():
             "has_webhook_start_break": bool(WORKDAY_WEBHOOK_START_BREAK_URL),
             "has_webhook_stop_break": bool(WORKDAY_WEBHOOK_STOP_BREAK_URL),
             "timezone": WORKDAY_TIMEZONE,
+            "runtime_phase": workday_service.get_status().get("phase"),
+            "runtime_state_file": str(workday_service.runtime_state_path),
+            "runtime_events_file": str(workday_service.runtime_events_path),
         },
         "email_agent": {
             "config_valid": len(_email_missing_required_config()) == 0,

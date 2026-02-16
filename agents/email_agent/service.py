@@ -59,7 +59,7 @@ class EmailAgentService:
 
     def _debug(self, message: str, **meta: Any) -> None:
         suffix = " | "+", ".join(f"{k}={v}" for k,v in meta.items()) if meta else ""
-        logger.info(f"[DEBUG][{AGENT_NAME}] {message} | hora_texto={self._now_text()}{suffix}")
+        logger.debug(f"[DEBUG][{AGENT_NAME}] {message} | hora_texto={self._now_text()}{suffix}")
 
     @staticmethod
     def _decode_mime_header(value: Optional[str]) -> str:
@@ -144,7 +144,7 @@ class EmailAgentService:
                 return default_config
             return {**default_config, **data}
         except json.JSONDecodeError:
-            logger.exception("email_agent_config.json inválido; se usan defaults")
+            logger.warning("email_agent_config.json inválido; se usan defaults")
             return default_config
 
     def load_memory_examples(self, max_items: int = 8) -> List[Dict[str, Any]]:
@@ -174,7 +174,7 @@ class EmailAgentService:
                 return []
             return data
         except json.JSONDecodeError:
-            logger.exception("email_agent_suggestions.json inválido; se usa []")
+            logger.warning("email_agent_suggestions.json inválido; se usa []")
             return []
 
     def save_suggestions(self, suggestions: List[Dict[str, Any]]) -> None:
