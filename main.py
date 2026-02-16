@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 
 from agents.email_agent.service import EmailAgentService
@@ -323,9 +323,12 @@ APP.include_router(create_email_router(email_service, JOB_SECRET, _email_missing
 
 
 @APP.get("/")
-def root():
+def root(request: Request):
     """Redirige la raíz al UI del agente de correo (útil en Ingress)."""
-    return RedirectResponse(url="email-agent/ui", status_code=307)
+    target = "email-agent/ui"
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    return RedirectResponse(url=target, status_code=307)
 
 
 @APP.get("/health")
