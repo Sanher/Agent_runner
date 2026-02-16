@@ -47,6 +47,10 @@ def create_workday_router(
 
         return "", "missing"
 
+    def _is_ingress_request(request: Request) -> bool:
+        # Home Assistant Ingress añade este header al proxyar al add-on.
+        return bool(request.headers.get("x-ingress-path", "").strip())
+
     @router.post("/run/{job_name}")
     def run_job(job_name: str, req: RunRequest, request: Request):
         """Ejecuta un job registrado (por ejemplo workday_flow)."""
@@ -58,16 +62,19 @@ def create_workday_router(
             )
 
         if job_secret:
-            provided, source = _extract_secret(request, req, allow_body=True)
-            if provided != job_secret:
-                logger.warning(
-                    "Unauthorized en /run/%s (source=%s, client=%s)",
-                    job_name,
-                    source,
-                    request.client.host if request.client else "unknown",
-                )
-                raise HTTPException(status_code=401, detail="Unauthorized")
-            logger.debug("Auth OK en /run/%s (source=%s)", job_name, source)
+            if _is_ingress_request(request):
+                logger.debug("Auth bypass en /run/%s por ingress", job_name)
+            else:
+                provided, source = _extract_secret(request, req, allow_body=True)
+                if provided != job_secret:
+                    logger.warning(
+                        "Unauthorized en /run/%s (source=%s, client=%s)",
+                        job_name,
+                        source,
+                        request.client.host if request.client else "unknown",
+                    )
+                    raise HTTPException(status_code=401, detail="Unauthorized")
+                logger.debug("Auth OK en /run/%s (source=%s)", job_name, source)
 
         runner = runners.get(job_name)
         if not runner:
@@ -80,6 +87,11 @@ def create_workday_router(
         """Valida auth para endpoints GET/POST del router workday."""
         if not job_secret:
             # Si no hay secret global, no se exige auth en este router.
+            return
+        # En Ingress ya existe autenticación previa de Home Assistant.
+        # Evita falsos Unauthorized cuando no viaja ?secret=...
+        if _is_ingress_request(request):
+            logger.debug("Auth bypass en %s por ingress", request.url.path)
             return
         provided, source = _extract_secret(request, allow_body=False)
         if provided != job_secret:
