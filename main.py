@@ -12,8 +12,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 
 from agents.email_agent.service import EmailAgentService
+from agents.issue_agent.service import IssueAgentService
 from agents.workday_agent.service import WorkdayAgentService
 from routers.email_agent import create_email_router
+from routers.issue_agent import create_issue_router
 from routers.workday_agent import create_workday_router
 
 
@@ -163,6 +165,20 @@ EMAIL_ALLOWED_FROM_WHITELIST = _setting_email_whitelist(
 )
 EMAIL_BACKGROUND_INTERVAL_HOURS = max(1, _setting_int("email_background_interval_hours", 4))
 
+# Agente issues (OpenAI + Playwright)
+ISSUE_TARGET_WEB_URL = _setting("issue_target_web_url", "")
+ISSUE_OPENAI_API_KEY = _setting_with_aliases("issue_openai_api_key", ["openai_api_key"], "")
+ISSUE_OPENAI_MODEL = _setting_with_aliases("issue_openai_model", ["openai_model"], "gpt-4o-mini")
+ISSUE_OPENAI_STYLE_LAW = _setting(
+    "issue_openai_style_law",
+    "Escribe issues claras, accionables y con contexto técnico suficiente.",
+)
+ISSUE_WEBHOOK_URL = _setting_with_aliases(
+    "issue_webhook_url",
+    ["hass_webhook_url_issue"],
+    WORKDAY_WEBHOOK_START_URL,
+)
+
 
 def _apply_timezone() -> None:
     """Aplica TZ de proceso para que fechas/ventanas usen hora local."""
@@ -196,6 +212,16 @@ email_service = EmailAgentService(
     allowed_from_whitelist=EMAIL_ALLOWED_FROM_WHITELIST,
 )
 
+issue_service = IssueAgentService(
+    data_dir=DATA_DIR,
+    target_web_url=ISSUE_TARGET_WEB_URL,
+    openai_api_key=ISSUE_OPENAI_API_KEY,
+    openai_model=ISSUE_OPENAI_MODEL,
+    openai_style_law=ISSUE_OPENAI_STYLE_LAW,
+    webhook_url=ISSUE_WEBHOOK_URL,
+    logger=logger.getChild("issue_agent"),
+)
+
 def _workday_missing_required_config() -> List[str]:
     missing: List[str] = []
     required = {
@@ -218,6 +244,18 @@ def _email_missing_required_config() -> List[str]:
         "email_openai_api_key": EMAIL_OPENAI_API_KEY,
         "email_imap_email": EMAIL_IMAP_EMAIL,
         "email_imap_password": EMAIL_IMAP_PASSWORD,
+    }
+    for key, value in required.items():
+        if not str(value).strip():
+            missing.append(key)
+    return missing
+
+
+def _issue_missing_required_config() -> List[str]:
+    missing: List[str] = []
+    required = {
+        "issue_target_web_url": ISSUE_TARGET_WEB_URL,
+        "issue_openai_api_key": ISSUE_OPENAI_API_KEY,
     }
     for key, value in required.items():
         if not str(value).strip():
@@ -361,6 +399,33 @@ def _email_scheduler_loop() -> None:
         time.sleep(interval_seconds)
 
 
+def _issue_daily_report_loop() -> None:
+    # Scheduler para HA add-on: publica heartbeat diario al webhook configurado.
+    logger.info("Scheduler diario issue-agent iniciado")
+    last_report_date = ""
+    last_invalid_signature = ""
+    while True:
+        missing = _issue_missing_required_config()
+        if missing:
+            signature = ",".join(sorted(missing))
+            if signature != last_invalid_signature:
+                logger.error("Config issue-agent inválida. Faltan: %s", signature)
+                last_invalid_signature = signature
+            time.sleep(60)
+            continue
+
+        last_invalid_signature = ""
+        today = datetime.now().strftime("%Y-%m-%d")
+        if today != last_report_date:
+            try:
+                issue_service.send_webhook_report(reason="daily_status", details={"date": today})
+                logger.info("Reporte diario issue-agent enviado (date=%s)", today)
+                last_report_date = today
+            except Exception:
+                logger.exception("No se pudo enviar reporte diario de issue-agent")
+        time.sleep(300)
+
+
 @APP.on_event("startup")
 def _on_startup() -> None:
     recovery_thread = threading.Thread(
@@ -381,10 +446,17 @@ def _on_startup() -> None:
         daemon=True,
     )
     email_thread.start()
+    issue_thread = threading.Thread(
+        target=_issue_daily_report_loop,
+        name="issue-daily-report",
+        daemon=True,
+    )
+    issue_thread.start()
 
 
 APP.include_router(create_workday_router(workday_service, JOB_SECRET, _workday_missing_required_config))
 APP.include_router(create_email_router(email_service, JOB_SECRET, _email_missing_required_config))
+APP.include_router(create_issue_router(issue_service, JOB_SECRET, _issue_missing_required_config))
 
 
 @APP.get("/")
@@ -430,5 +502,13 @@ def health():
             "allowed_from_whitelist": EMAIL_ALLOWED_FROM_WHITELIST,
             "background_interval_hours": EMAIL_BACKGROUND_INTERVAL_HOURS,
         },
-        "agents": ["workday_agent", "email_agent"],
+        "issue_agent": {
+            "config_valid": len(_issue_missing_required_config()) == 0,
+            "missing_required_config": _issue_missing_required_config(),
+            "has_target_web_url": bool(ISSUE_TARGET_WEB_URL),
+            "has_openai_api_key": bool(ISSUE_OPENAI_API_KEY),
+            "has_openai_model": bool(ISSUE_OPENAI_MODEL),
+            "has_webhook_url": bool(ISSUE_WEBHOOK_URL),
+        },
+        "agents": ["workday_agent", "email_agent", "issue_agent"],
     }

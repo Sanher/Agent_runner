@@ -10,6 +10,8 @@ Ahora hay dos agentes separados por carpeta y `main.py` actúa como **compositor
 - `routers/workday_agent.py`: endpoints del agente web (`/run/{job_name}`, `/jobs`).
 - `agents/email_agent/service.py`: lógica del agente de correo (Gmail + OpenAI + memoria + webhook).
 - `routers/email_agent.py`: endpoints y UI del agente de correo.
+- `agents/issue_agent/service.py`: lógica del agente de issues (OpenAI + Playwright + memoria + webhook).
+- `routers/issue_agent.py`: endpoints del agente de issues (`/issue-agent/*`).
 - `main.py`: carga configuración, instancia servicios y monta routers.
 
 ## Requisitos
@@ -64,6 +66,19 @@ Campos obligatorios para que `email_agent` pueda ejecutar detección/regeneraci�
 - `EMAIL_OPENAI_API_KEY`
 - `EMAIL_IMAP_EMAIL`
 - `EMAIL_IMAP_PASSWORD`
+
+### Agente issues (`issue_agent`)
+
+- `ISSUE_TARGET_WEB_URL`
+- `ISSUE_OPENAI_API_KEY` (legacy: `OPENAI_API_KEY`)
+- `ISSUE_OPENAI_MODEL` (legacy: `OPENAI_MODEL`, por defecto `gpt-4o-mini`)
+- `ISSUE_OPENAI_STYLE_LAW` (ley/estilo para que escriba issues como tú)
+- `ISSUE_WEBHOOK_URL` (legacy: `HASS_WEBHOOK_URL_ISSUE`; por defecto reutiliza `WORKDAY_WEBHOOK_START_URL`)
+
+Campos obligatorios para que `issue_agent` pueda generar/rellenar issues:
+
+- `ISSUE_TARGET_WEB_URL`
+- `ISSUE_OPENAI_API_KEY`
 
 Ejemplo mínimo para correo (Gmail IMAP):
 
@@ -122,6 +137,29 @@ Seguridad:
 - Se puede enviar en header `X-Job-Secret` o en query string `?secret=...`.
 - En `POST /run/{job_name}` también se acepta en body JSON como `payload.secret` (retrocompatibilidad).
 - Para UI por navegador: `GET /email-agent/ui?secret=...`
+
+### Agente de issues
+
+- `GET /issue-agent/status`
+- `GET /issue-agent/events`
+- `POST /issue-agent/generate`
+- `POST /issue-agent/submit`
+- `POST /issue-agent/report`
+
+Notas:
+
+- El flujo de Playwright está preparado para modo no-headless y login manual.
+- Puede rellenar `title`, `description`, `comment` (opcional), clickar desplegables y pulsar botón submit según selectores enviados.
+- Genera enlace a partir de `ISSUE_TARGET_WEB_URL` + input de usuario.
+- Incluye scheduler diario para enviar estado a webhook de HA.
+- Emite logs de diagnóstico pensados para Home Assistant add-ons (auth, config y errores de ejecución).
+
+## Flujo issue recomendado
+
+1. Llama `POST /issue-agent/generate` con tu contexto de issue.
+2. Revisa el resultado (`title`, `description`, `comment`, `generated_link`).
+3. Llama `POST /issue-agent/submit` con selectores del formulario destino.
+4. Usa `POST /issue-agent/report` para notificar manualmente incidencias a HA.
 
 ## Flujo correo recomendado
 

@@ -18,5 +18,11 @@
     "info@dextools.io"
   ],
   "email_background_interval_hours": 4,
-  "email_webhook_notify_url": "https://tu-ha-webhook/email-notify"
+  "email_webhook_notify_url": "https://tu-ha-webhook/email-notify",
+
+  "issue_target_web_url": "https://tu-web-de-issues.example.com/new",
+  "issue_openai_api_key": "sk-xxxx",
+  "issue_openai_model": "gpt-4o-mini",
+  "issue_openai_style_law": "Escribe issues claras, accionables y con contexto técnico suficiente.",
+  "issue_webhook_url": "https://tu-ha-webhook/issue-agent"
 }
