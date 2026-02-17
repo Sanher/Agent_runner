@@ -431,6 +431,54 @@ class WorkdayAgentService:
         page.wait_for_selector(selector, timeout=timeout_ms)
         page.click(selector)
 
+    def _click_and_confirm_transition(
+        self,
+        page,
+        click_icon_label: str,
+        expected_icon_label: str,
+        action_label: str,
+        timeout_ms: int = 15_000,
+    ) -> None:
+        self._click_icon_button(page, click_icon_label, timeout_ms=timeout_ms)
+        expected_selector = f"button:has(svg[aria-label='{expected_icon_label}'])"
+        try:
+            page.wait_for_selector(expected_selector, timeout=timeout_ms)
+        except Exception as exc:
+            raise RuntimeError(
+                f"No se pudo confirmar {action_label}: no apareció {expected_icon_label} tras pulsar {click_icon_label}"
+            ) from exc
+
+
+    def _confirm_end_of_day_modal(self, page, timeout_ms: int = 15_000) -> None:
+        # En Holded, tras pulsar Icon-stop aparece un modal de confirmación.
+        # Solo se considera fin de jornada cuando también se pulsa este botón.
+        # HTML de referencia del botón de confirmación:
+        # <button class="MuiButtonBase-root MuiButton-root MuiButton-contained MuiButton-containedPrimary MuiButton-sizeMedium MuiButton-containedSizeMedium MuiButton-colorPrimary MuiButton-disableElevation MuiButton-root MuiButton-contained MuiButton-containedPrimary MuiButton-sizeMedium MuiButton-containedSizeMedium MuiButton-colorPrimary MuiButton-disableElevation css-1cm63gq" tabindex="0" type="button">Sí, he terminado</button>
+        time.sleep(2)
+        modal_selector = "button:has-text('Sí, he terminado')"
+        fallback_selector = "button:has-text('Si, he terminado')"
+        try:
+            page.wait_for_selector(modal_selector, timeout=timeout_ms)
+            page.click(modal_selector)
+        except Exception:
+            try:
+                page.wait_for_selector(fallback_selector, timeout=timeout_ms)
+                page.click(fallback_selector)
+            except Exception as exc:
+                raise RuntimeError(
+                    "No se pudo confirmar fin de jornada: no apareció el botón 'Sí, he terminado'"
+                ) from exc
+
+    def _complete_end_of_day(self, page, timeout_ms: int = 15_000) -> None:
+        self._click_icon_button(page, "Icon-stop", timeout_ms=timeout_ms)
+        self._confirm_end_of_day_modal(page, timeout_ms=timeout_ms)
+        try:
+            page.wait_for_selector("button:has(svg[aria-label='Icon-play'])", timeout=timeout_ms)
+        except Exception as exc:
+            raise RuntimeError(
+                "No se pudo confirmar fin de jornada: tras confirmar modal no apareció Icon-play"
+            ) from exc
+
     def _dismiss_cookie_popup(self, page):
         try:
             page.locator("#onetrust-reject-all-handler").first.click(timeout=5_000)
@@ -533,7 +581,7 @@ class WorkdayAgentService:
                     open_target()
                     context.storage_state(path=str(storage_path))
                     self.logger.info("Reanudación: storage_state actualizado en %s", storage_path)
-                    self._click_icon_button(page, "Icon-play")
+                    self._click_and_confirm_transition(page, "Icon-play", "Icon-pause", "inicio de jornada")
                     first_click_ts = time.time()
                     executed_at = datetime.now().isoformat()
                     self.send_status(job_name, run_id, "first_click", "Reanudación: pulsado inicio (Icon-play)")
@@ -572,7 +620,7 @@ class WorkdayAgentService:
                         second_click_ts = random.uniform(second_min, second_max)
                     self._sleep_until(second_click_ts)
                     open_target()
-                    self._click_icon_button(page, "Icon-pause")
+                    self._click_and_confirm_transition(page, "Icon-pause", "Icon-play", "inicio de descanso")
                     start_break_at = datetime.now().isoformat()
                     self.send_status(job_name, run_id, "start_break_click", "Reanudación: pulsado start break")
                     self.send_click_webhook(
@@ -614,7 +662,7 @@ class WorkdayAgentService:
                         third_click_ts = time.time() + 15
                     self._sleep_until(third_click_ts)
                     open_target()
-                    self._click_icon_button(page, "Icon-play")
+                    self._click_and_confirm_transition(page, "Icon-play", "Icon-stop", "fin de descanso")
                     stop_break_at = datetime.now().isoformat()
                     break_gap_seconds = max(
                         0,
@@ -665,7 +713,7 @@ class WorkdayAgentService:
                         final_ts = random.uniform(final_earliest, final_latest)
                     self._sleep_until(final_ts)
                     open_target()
-                    self._click_icon_button(page, "Icon-stop")
+                    self._complete_end_of_day(page)
                     self.send_status(job_name, run_id, "final_click", "Reanudación: pulsado fin de jornada")
                     snap("recovered_final_click")
                     final_click_ts = time.time()
@@ -854,7 +902,7 @@ class WorkdayAgentService:
                 context.storage_state(path=str(storage_path))
                 self.logger.info("storage_state actualizado en %s", storage_path)
 
-                self._click_icon_button(page, "Icon-play")
+                self._click_and_confirm_transition(page, "Icon-play", "Icon-pause", "inicio de jornada")
                 self.send_status(job_name, run_id, "first_click", "Pulsado botón de inicio (Icon-play)")
                 self.send_click_webhook(
                     self.webhook_start_url,
@@ -890,7 +938,7 @@ class WorkdayAgentService:
                 page.reload(wait_until="domcontentloaded", timeout=60_000)
                 self._dismiss_cookie_popup(page)
                 self._dismiss_location_prompt(page)
-                self._click_icon_button(page, "Icon-pause")
+                self._click_and_confirm_transition(page, "Icon-pause", "Icon-play", "inicio de descanso")
                 start_break_at = datetime.now().isoformat()
                 self.send_status(job_name, run_id, "start_break_click", "Pulsado start break (Icon-pause)")
                 self.send_click_webhook(
@@ -931,7 +979,7 @@ class WorkdayAgentService:
                 page.reload(wait_until="domcontentloaded", timeout=60_000)
                 self._dismiss_cookie_popup(page)
                 self._dismiss_location_prompt(page)
-                self._click_icon_button(page, "Icon-play")
+                self._click_and_confirm_transition(page, "Icon-play", "Icon-stop", "fin de descanso")
                 stop_break_at = datetime.now().isoformat()
                 self.send_status(job_name, run_id, "stop_break_click", "Pulsado stop break (Icon-play)")
                 break_gap_seconds = max(0, int(datetime.fromisoformat(stop_break_at).timestamp() - datetime.fromisoformat(start_break_at).timestamp()))
@@ -976,7 +1024,7 @@ class WorkdayAgentService:
                 page.reload(wait_until="domcontentloaded", timeout=60_000)
                 self._dismiss_cookie_popup(page)
                 self._dismiss_location_prompt(page)
-                self._click_icon_button(page, "Icon-stop")
+                self._complete_end_of_day(page)
                 self.send_status(job_name, run_id, "final_click", "Pulsado fin de jornada (Icon-stop)")
                 snap("final_click")
                 final_click_ts = time.time()
