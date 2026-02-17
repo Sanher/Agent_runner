@@ -639,8 +639,8 @@ class WorkdayAgentService:
                     stop_break_ts = datetime.fromisoformat(stop_break_at).timestamp()
                     final_ts = self._safe_float(state.get("planned_final_ts"))
                     if final_ts <= 0:
-                        final_earliest = first_click_ts + (7 * 3600)
-                        final_latest = first_click_ts + (7 * 3600) + (45 * 60)
+                        final_earliest = first_click_ts + (7 * 3600) + (45 * 60)
+                        final_latest = final_earliest + 59
                         final_ts = random.uniform(final_earliest, final_latest)
                     self._set_runtime_state(
                         "working_after_break",
@@ -660,8 +660,8 @@ class WorkdayAgentService:
                         raise RuntimeError("No hay first_click_ts para reanudar click final")
                     final_ts = self._safe_float(state.get("planned_final_ts"))
                     if final_ts <= 0:
-                        final_earliest = first_click_ts + (7 * 3600)
-                        final_latest = first_click_ts + (7 * 3600) + (45 * 60)
+                        final_earliest = first_click_ts + (7 * 3600) + (45 * 60)
+                        final_latest = final_earliest + 59
                         final_ts = random.uniform(final_earliest, final_latest)
                     self._sleep_until(final_ts)
                     open_target()
@@ -951,8 +951,8 @@ class WorkdayAgentService:
                 snap("stop_break_click")
                 stop_break_ts = datetime.fromisoformat(stop_break_at).timestamp()
 
-                final_latest = first_click_ts + (7 * 3600) + (45 * 60)
-                final_earliest = first_click_ts + (7 * 3600)
+                final_earliest = first_click_ts + (7 * 3600) + (45 * 60)
+                final_latest = final_earliest + 59
                 final_ts = random.uniform(final_earliest, final_latest)
                 self.send_status(
                     job_name,
