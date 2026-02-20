@@ -24,67 +24,126 @@ def create_ui_router(job_secret: str) -> APIRouter:
   <title>Agent Runner UI</title>
   <style>
     :root {
-      --bg: #0f172a;
-      --text: #e5e7eb;
+      --bg: #020617;
+      --bg-soft: #0f172a;
+      --text: #e2e8f0;
       --muted: #94a3b8;
-      --card-bg: #111827;
-      --card-border: #334155;
-      --input-bg: #0b1220;
-      --input-border: #475569;
-      --button-bg: #1d4ed8;
-      --button-hover: #1e40af;
-      --button-text: #ffffff;
+      --card-bg: rgba(15, 23, 42, 0.84);
+      --card-border: rgba(148, 163, 184, 0.22);
+      --input-bg: rgba(15, 23, 42, 0.78);
+      --input-border: rgba(148, 163, 184, 0.32);
+      --input-focus: #38bdf8;
+      --button-bg: linear-gradient(135deg, #2563eb, #7c3aed);
+      --button-hover: linear-gradient(135deg, #1d4ed8, #6d28d9);
+      --button-text: #f8fafc;
+      --shadow: 0 18px 35px rgba(2, 6, 23, 0.45);
     }
 
     :root[data-theme='light'] {
-      --bg: #f8fafc;
+      --bg: #f1f5f9;
+      --bg-soft: #ffffff;
       --text: #0f172a;
       --muted: #475569;
-      --card-bg: #ffffff;
-      --card-border: #cbd5e1;
+      --card-bg: rgba(255, 255, 255, 0.95);
+      --card-border: rgba(148, 163, 184, 0.45);
       --input-bg: #ffffff;
-      --input-border: #94a3b8;
-      --button-bg: #2563eb;
-      --button-hover: #1d4ed8;
+      --input-border: rgba(148, 163, 184, 0.72);
+      --input-focus: #0ea5e9;
+      --button-bg: linear-gradient(135deg, #2563eb, #0ea5e9);
+      --button-hover: linear-gradient(135deg, #1d4ed8, #0284c7);
       --button-text: #ffffff;
+      --shadow: 0 15px 30px rgba(148, 163, 184, 0.35);
     }
 
     body {
-      font-family: Arial, sans-serif;
-      max-width: 1100px;
-      margin: 24px auto;
-      background: var(--bg);
+      font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+      margin: 0;
+      background: radial-gradient(circle at 20% 0%, #1e293b 0%, var(--bg) 45%);
       color: var(--text);
       transition: background 0.2s ease, color 0.2s ease;
-      padding: 0 20px 24px 20px;
+      padding: 24px;
       box-sizing: border-box;
+      min-height: 100vh;
     }
+
+    .theme-floating-btn {
+      position: fixed;
+      top: 18px;
+      right: 18px;
+      z-index: 20;
+      width: 44px;
+      height: 44px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      padding: 0;
+      margin: 0;
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 18px;
+      max-width: 1320px;
+      margin: 0 auto;
+      align-items: start;
+    }
+
+    .sidebar {
+      border: 1px solid var(--card-border);
+      background: var(--card-bg);
+      border-radius: 16px;
+      padding: 18px;
+      position: sticky;
+      top: 20px;
+      backdrop-filter: blur(6px);
+      box-shadow: var(--shadow);
+    }
+
+    .brand-title { margin: 0; }
+    .content-area { min-width: 0; }
 
     .card {
       border: 1px solid var(--card-border);
       background: var(--card-bg);
-      border-radius: 8px;
-      padding: 12px;
-      margin-bottom: 12px;
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 14px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(4px);
     }
 
     pre {
       white-space: pre-wrap;
       background: var(--input-bg);
       border: 1px solid var(--input-border);
-      border-radius: 6px;
-      padding: 8px;
+      border-radius: 10px;
+      padding: 10px;
     }
 
-    textarea {
+    textarea,
+    input,
+    select {
       width: 100%;
-      min-height: 140px;
       background: var(--input-bg);
       color: var(--text);
       border: 1px solid var(--input-border);
-      border-radius: 6px;
-      padding: 8px;
+      border-radius: 10px;
+      padding: 10px 12px;
       box-sizing: border-box;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    textarea { min-height: 140px; }
+
+    textarea:focus,
+    input:focus,
+    select:focus {
+      outline: none;
+      border-color: var(--input-focus);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--input-focus) 25%, transparent);
     }
 
     button {
@@ -94,29 +153,87 @@ def create_ui_router(job_secret: str) -> APIRouter:
       background: var(--button-bg);
       color: var(--button-text);
       border: 0;
-      border-radius: 6px;
-      padding: 8px 12px;
+      border-radius: 10px;
+      padding: 9px 14px;
       cursor: pointer;
+      font-weight: 600;
+      transition: transform 0.2s ease, filter 0.2s ease;
     }
 
-    button:hover { background: var(--button-hover); }
-    .tabs { display: flex; gap: 8px; margin: 8px 0 14px 0; }
-    .tab-btn { opacity: 0.8; }
-    .tab-btn.active { opacity: 1; outline: 2px solid var(--card-border); }
+    button:hover {
+      background: var(--button-hover);
+      transform: translateY(-1px);
+      filter: brightness(1.05);
+    }
+
+    .tabs {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 14px 0;
+    }
+
+    .tab-btn {
+      width: 100%;
+      text-align: left;
+      margin: 0;
+      opacity: 0.86;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      color: var(--text);
+    }
+
+    .tab-btn.active {
+      opacity: 1;
+      border-color: var(--input-focus);
+      box-shadow: inset 0 0 0 1px var(--input-focus);
+    }
+
+    details.settings-dropdown {
+      margin-bottom: 14px;
+    }
+
+    details.settings-dropdown > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 10px 12px;
+      border: 1px solid var(--input-border);
+      border-radius: 10px;
+      background: var(--input-bg);
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+
+    details.settings-dropdown > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.settings-dropdown > summary::after {
+      content: '▾';
+      float: right;
+      opacity: 0.9;
+    }
+
+    details.settings-dropdown:not([open]) > summary::after {
+      content: '▸';
+    }
+
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
     .kv { margin: 4px 0; }
+
     .logs {
       white-space: pre-wrap;
       background: var(--input-bg);
       border: 1px solid var(--input-border);
-      border-radius: 6px;
+      border-radius: 10px;
       padding: 10px;
       max-height: 260px;
       overflow: auto;
       font-family: Menlo, Consolas, monospace;
       font-size: 12px;
     }
+
     .muted { color: var(--muted); font-size: 0.9em; }
     .modal-backdrop {
       position: fixed;
@@ -127,67 +244,83 @@ def create_ui_router(job_secret: str) -> APIRouter:
       justify-content: center;
       z-index: 10;
     }
+
     .modal-backdrop.hidden { display: none; }
+
     .modal-card {
       width: min(760px, 92vw);
       max-height: 88vh;
       overflow: auto;
       border: 1px solid var(--card-border);
       background: var(--card-bg);
-      border-radius: 10px;
+      border-radius: 14px;
       padding: 16px;
       box-sizing: border-box;
+      box-shadow: var(--shadow);
     }
+
     .modal-card h3 { margin-top: 0; }
     .field {
       display: block;
       width: 100%;
       max-width: 100%;
       min-width: 0;
-      background: var(--input-bg);
-      color: var(--text);
-      border: 1px solid var(--input-border);
-      border-radius: 6px;
-      padding: 10px 12px;
       margin-bottom: 8px;
       box-sizing: border-box;
     }
+
     input.field[type="date"] {
       padding-right: 12px;
     }
+
     .answers-messages {
       border: 1px solid var(--input-border);
-      border-radius: 6px;
+      border-radius: 10px;
       background: var(--input-bg);
       padding: 8px;
       max-height: 220px;
       overflow: auto;
       margin-bottom: 10px;
     }
+
     .answers-msg {
       border-bottom: 1px solid var(--input-border);
       padding: 8px 0;
     }
+
     .answers-msg:last-child {
       border-bottom: 0;
       padding-bottom: 0;
     }
-  </style>
+
+    @media (max-width: 980px) {
+      .app-shell { grid-template-columns: 1fr; }
+      .sidebar { position: static; }
+      body { padding: 14px; }
+      .theme-floating-btn {
+        top: 10px;
+        right: 10px;
+      }
+    }
+</style>
 </head>
 <body>
-  <h1>Agent Runner</h1>
-  <p class=\"muted\">Monitor and manage web, email, issue and answers agents in a single interface.</p>
+  <button onclick="toggleTheme()" id="themeToggle" class="theme-floating-btn" aria-label="Toggle theme" title="Toggle theme">🌙</button>
 
-  <button onclick=\"toggleTheme()\" id=\"themeToggle\">Switch to light mode</button>
-  <p id=\"status\"></p>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <h1 class="brand-title">Agent Runner</h1>
+      <p class="muted">Monitor and manage web, email, issue and answers agents in a single interface.</p>
+      <p id="status"></p>
+      <div class="tabs">
+        <button id="tabWorkdayBtn" class="tab-btn active" onclick="showTab('workday')">Web Interaction Agent</button>
+        <button id="tabEmailBtn" class="tab-btn" onclick="showTab('email')">Email Agent</button>
+        <button id="tabIssueBtn" class="tab-btn" onclick="showTab('issue')">Issue Agent</button>
+        <button id="tabAnswersBtn" class="tab-btn" onclick="showTab('answers')">Answers Agent</button>
+      </div>
+    </aside>
 
-  <div class=\"tabs\">
-    <button id=\"tabWorkdayBtn\" class=\"tab-btn active\" onclick=\"showTab('workday')\">Web Interaction Agent</button>
-    <button id=\"tabEmailBtn\" class=\"tab-btn\" onclick=\"showTab('email')\">Email Agent</button>
-    <button id=\"tabIssueBtn\" class=\"tab-btn\" onclick=\"showTab('issue')\">Issue Agent</button>
-    <button id=\"tabAnswersBtn\" class=\"tab-btn\" onclick=\"showTab('answers')\">Answers Agent</button>
-  </div>
-
+    <main class="content-area">
   <section id=\"tabWorkday\" class=\"tab-panel active\">
     <div class=\"card\">
       <h3>Real-time status</h3>
@@ -199,6 +332,14 @@ def create_ui_router(job_secret: str) -> APIRouter:
       </div>
     </div>
     <div class=\"card\">
+      <h3>Click history (today)</h3>
+      <div id=\"workdayClicks\" class=\"muted\">Loading history...</div>
+    </div>
+    <div class=\"card\">
+      <h3>Runtime logs (real-time)</h3>
+      <div id=\"workdayEvents\" class=\"logs\">Loading events...</div>
+    </div>
+    <div class=\"card\">
       <h3>Blocked days (no auto start)</h3>
       <p class=\"muted\">If today is inside this range, the scheduler will not start requests automatically.</p>
       <label class=\"muted\">Start date</label>
@@ -208,14 +349,6 @@ def create_ui_router(job_secret: str) -> APIRouter:
       <button onclick=\"saveWorkdaySettings()\" id=\"workdaySaveSettingsBtn\">Save blocked dates</button>
       <div id=\"workdaySettingsStatus\" class=\"muted\"></div>
     </div>
-    <div class=\"card\">
-      <h3>Click history (today)</h3>
-      <div id=\"workdayClicks\" class=\"muted\">Loading history...</div>
-    </div>
-    <div class=\"card\">
-      <h3>Runtime logs (real-time)</h3>
-      <div id=\"workdayEvents\" class=\"logs\">Loading events...</div>
-    </div>
   </section>
 
   <section id=\"tabEmail\" class=\"tab-panel\">
@@ -224,22 +357,24 @@ def create_ui_router(job_secret: str) -> APIRouter:
     <button onclick=\"loadSuggestions()\">Refresh list</button>
     <button id=\"emailReviewedToggleBtn\" onclick=\"toggleReviewedSuggestions()\">View reviewed</button>
 
-    <div class=\"card\">
-      <h3>Email settings</h3>
-      <label class=\"muted\">From (fixed)</label>
-      <input id=\"defaultFromEmail\" class=\"field\" readonly />
-      <label class=\"muted\">Default CC (optional)</label>
-      <input id=\"defaultCcEmail\" class=\"field\" placeholder=\"cc1@example.com, cc2@example.com\" />
-      <label class=\"muted\">Signature assets dir</label>
-      <input id=\"signatureAssetsDir\" class=\"field\" placeholder=\"/config/media/signature\" />
-      <label class=\"muted\">Signature</label>
-      <textarea id=\"emailSignature\" class=\"field\" style=\"min-height:90px\" placeholder=\"Best regards,\"></textarea>
-      <p class=\"muted\">Available placeholders: {{logo}}, {{linkedin}}, {{tiktok}}, {{instagram}}, {{twitter}}, {{youtube}}, {{telegram}}</p>
-      <label class=\"muted\">Whitelist</label>
-      <p class=\"muted\">One sender per line (or comma-separated). Only these senders generate suggestions.</p>
-      <textarea id=\"allowedWhitelist\" class=\"field\" style=\"min-height:90px\" placeholder=\"alerts@example.com\"></textarea>
-      <button onclick=\"saveSettings()\" id=\"saveSettingsBtn\">Save email settings</button>
-    </div>
+    <details id=\"emailSettingsDetails\" class=\"settings-dropdown\" open>
+      <summary id=\"emailSettingsSummary\">Email settings</summary>
+      <div class=\"card\">
+        <label class=\"muted\">From (fixed)</label>
+        <input id=\"defaultFromEmail\" class=\"field\" readonly />
+        <label class=\"muted\">Default CC (optional)</label>
+        <input id=\"defaultCcEmail\" class=\"field\" placeholder=\"cc1@example.com, cc2@example.com\" />
+        <label class=\"muted\">Signature assets dir</label>
+        <input id=\"signatureAssetsDir\" class=\"field\" placeholder=\"/config/media/signature\" />
+        <label class=\"muted\">Signature</label>
+        <textarea id=\"emailSignature\" class=\"field\" style=\"min-height:90px\" placeholder=\"Best regards,\"></textarea>
+        <p class=\"muted\">Available placeholders: {{logo}}, {{linkedin}}, {{tiktok}}, {{instagram}}, {{twitter}}, {{youtube}}, {{telegram}}</p>
+        <label class=\"muted\">Whitelist</label>
+        <p class=\"muted\">One sender per line (or comma-separated). Only these senders generate suggestions.</p>
+        <textarea id=\"allowedWhitelist\" class=\"field\" style=\"min-height:90px\" placeholder=\"alerts@example.com\"></textarea>
+        <button onclick=\"saveSettings()\" id=\"saveSettingsBtn\">Save email settings</button>
+      </div>
+    </details>
     <div id=\"list\"></div>
     <div id=\"emailReviewedSection\" class=\"card\" style=\"display:none;\">
       <h3>Reviewed emails</h3>
@@ -300,6 +435,9 @@ def create_ui_router(job_secret: str) -> APIRouter:
       <div id=\"answersArchivedList\"></div>
     </div>
   </section>
+
+      </main>
+  </div>
 
   <div id=\"suggestionModal\" class=\"modal-backdrop hidden\">
     <div class=\"modal-card\">
@@ -897,6 +1035,12 @@ function parseWhitelistInput(raw) {
   return Array.from(unique.values());
 }
 
+function updateEmailSettingsDisclosure(hasSavedConfig) {
+  const details = document.getElementById('emailSettingsDetails');
+  if (!details) return;
+  details.open = !hasSavedConfig;
+}
+
 async function loadSettings() {
   try {
     const r = await fetch(withEmailSecret('/settings'));
@@ -919,6 +1063,8 @@ async function loadSettings() {
     document.getElementById('defaultFromEmail').value = defaultFrom;
     document.getElementById('defaultCcEmail').value = defaultCc;
     document.getElementById('signatureAssetsDir').value = signatureAssetsDir;
+    const hasSavedConfig = Boolean(defaultFrom || defaultCc || signature || items.length);
+    updateEmailSettingsDisclosure(hasSavedConfig);
   } catch (err) {
     setStatus(`Error loading settings: ${err}`);
   }
@@ -960,6 +1106,8 @@ async function saveSettings() {
     document.getElementById('defaultFromEmail').value = defaultFrom;
     document.getElementById('defaultCcEmail').value = defaultCc;
     document.getElementById('signatureAssetsDir').value = signatureAssetsDir;
+    const hasSavedConfig = Boolean(defaultFrom || defaultCc || savedSignature || items.length);
+    updateEmailSettingsDisclosure(hasSavedConfig);
     setStatus(`Email settings saved (${items.length} sender${items.length === 1 ? '' : 's'} in whitelist)`);
   } catch (err) {
     setStatus(`Error saving settings: ${err}`);
@@ -1080,7 +1228,10 @@ function setTheme(theme) {
   localStorage.setItem('emailAgentTheme', theme);
   const btn = document.getElementById('themeToggle');
   if (btn) {
-    btn.innerText = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+    const toLight = theme === 'dark';
+    btn.innerText = toLight ? '☀️' : '🌙';
+    btn.setAttribute('aria-label', toLight ? 'Switch to light mode' : 'Switch to dark mode');
+    btn.setAttribute('title', toLight ? 'Switch to light mode' : 'Switch to dark mode');
   }
 }
 
