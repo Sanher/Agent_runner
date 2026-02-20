@@ -1,0 +1,10 @@
+*.sh
+!scripts/dev_local.sh
+/data
+/.data/
+/logs
+__pycache*
+.DS_Store
+no_headless/*.json
+no_headless/.env
+.env

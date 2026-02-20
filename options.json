@@ -1,0 +1,46 @@
+{
+  "job_secret": "cambia-esto-por-un-secreto",
+
+  "workday_target_url": "https://example.invalid/target",
+  "workday_sso_email": "usuario@example.com",
+  "workday_timezone": "UTC",
+  "workday_webhook_start_url": "https://example.invalid/webhook/start",
+  "workday_webhook_final_url": "https://example.invalid/webhook/final",
+  "workday_webhook_start_break_url": "https://example.invalid/webhook/start-break",
+  "workday_webhook_stop_break_url": "https://example.invalid/webhook/stop-break",
+
+  "email_openai_api_key": "sk-xxxx",
+  "email_openai_model": "gpt-4o-mini",
+  "email_imap_email": "usuario@example.com",
+  "email_imap_password": "tu-password-imap",
+  "email_imap_host": "imap.example.com",
+  "email_smtp_email": "usuario@example.com",
+  "email_smtp_password": "tu-password-smtp",
+  "email_smtp_host": "smtp.example.com",
+  "email_smtp_port": 465,
+  "email_default_from": "soporte@example.com",
+  "email_default_cc": "ops@example.com, audit@example.com",
+  "email_signature_assets_dir": "/config/media/signature",
+  "email_allowed_from_whitelist": [
+    "alerts@example.com"
+  ],
+  "email_background_interval_hours": 4,
+  "email_webhook_notify_url": "https://example.invalid/webhook/email-notify",
+  "support_telegram_url": "https://t.me/example_support",
+  "support_marketing_url": "https://example.invalid/marketing",
+  "support_user_url_prefix": "https://example.invalid",
+
+  "issue_repo_base_url": "",
+  "issue_project_name": "",
+  "issue_storage_state_path": "",
+  "issue_openai_api_key": "sk-xxxx",
+  "issue_openai_model": "gpt-4o-mini",
+  "issue_openai_style_law": "Escribe issues claras, accionables y con contexto técnico suficiente.",
+  "issue_repo_frontend": "",
+  "issue_repo_backend": "",
+  "issue_repo_management": "",
+  "issue_bug_parent_issue_frontend": "",
+  "issue_bug_parent_issue_backend": "",
+  "issue_bug_parent_issue_management": "",
+  "issue_webhook_url": "https://example.invalid/webhook/issue-agent"
+}
