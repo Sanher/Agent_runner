@@ -6,7 +6,7 @@ import mimetypes
 import re
 import smtplib
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from email import utils as email_utils
 from email.header import decode_header
 from email.message import EmailMessage, Message
@@ -40,6 +40,7 @@ SIGNATURE_ASSET_KEYS = (
     "youtube",
     "telegram",
 )
+REVIEWED_RETENTION_DAYS = 7
 
 
 class EmailAgentService:
@@ -343,7 +344,15 @@ class EmailAgentService:
             if not isinstance(data, list):
                 logger.warning("email_agent_suggestions.json is not a list; using []")
                 return []
-            return data
+            filtered, purged_count = self._purge_expired_reviewed_suggestions(data)
+            if purged_count:
+                self.save_suggestions(filtered)
+                self._debug(
+                    "Expired reviewed suggestions purged",
+                    purged=purged_count,
+                    retention_days=REVIEWED_RETENTION_DAYS,
+                )
+            return filtered
         except json.JSONDecodeError:
             logger.warning("email_agent_suggestions.json is invalid; using []")
             return []
@@ -353,6 +362,47 @@ class EmailAgentService:
         self.suggestions_path.write_text(
             json.dumps(suggestions, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+
+    @staticmethod
+    def _parse_iso_datetime(raw: Any) -> Optional[datetime]:
+        value = str(raw or "").strip()
+        if not value:
+            return None
+        if value.endswith("Z"):
+            value = f"{value[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is not None:
+            return parsed.astimezone().replace(tzinfo=None)
+        return parsed
+
+    @classmethod
+    def _purge_expired_reviewed_suggestions(
+        cls, suggestions: List[Dict[str, Any]]
+    ) -> tuple[List[Dict[str, Any]], int]:
+        now = datetime.now()
+        filtered: List[Dict[str, Any]] = []
+        purged_count = 0
+        retention = timedelta(days=REVIEWED_RETENTION_DAYS)
+
+        for item in suggestions:
+            status = str(item.get("status", "")).strip().lower()
+            if status != "reviewed":
+                filtered.append(item)
+                continue
+
+            reviewed_at = cls._parse_iso_datetime(
+                item.get("reviewed_at") or item.get("updated_at") or item.get("created_at")
+            )
+            if reviewed_at is None or (now - reviewed_at) <= retention:
+                filtered.append(item)
+                continue
+
+            purged_count += 1
+
+        return filtered, purged_count
 
     def _fetch_gmail_messages(
         self,

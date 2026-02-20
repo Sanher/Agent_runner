@@ -109,26 +109,27 @@ def create_email_router(
 
     @router.post("/suggestions/{suggestion_id}/status")
     def mark_status(suggestion_id: str, req: MarkStatusRequest, request: Request):
-        """Update suggestion status; reviewed removes it from the active list."""
+        """Update suggestion status; reviewed archives it from the active list."""
         ensure_auth(request)
         valid_statuses = {"draft", "reviewed", "copied", "sent"}
         if req.status not in valid_statuses:
             raise HTTPException(status_code=400, detail=f"status must be one of {sorted(valid_statuses)}")
         items = service.load_suggestions()
-        for index, item in enumerate(items):
+        for item in items:
             if item["suggestion_id"] == suggestion_id:
                 updated_at = datetime.now().isoformat()
                 if req.status == "reviewed":
-                    removed_item = {
-                        **item,
-                        "status": "reviewed",
-                        "updated_at": updated_at,
-                    }
-                    items.pop(index)
+                    item["status"] = "reviewed"
+                    item["updated_at"] = updated_at
+                    item["reviewed_at"] = updated_at
+                    item.pop("unarchived_at", None)
                     service.save_suggestions(items)
-                    return {"ok": True, "removed": True, "item": removed_item}
+                    return {"ok": True, "removed": True, "item": item}
                 item["status"] = req.status
                 item["updated_at"] = updated_at
+                if req.status == "draft":
+                    item.pop("reviewed_at", None)
+                    item["unarchived_at"] = updated_at
                 service.save_suggestions(items)
                 return {"ok": True, "removed": False, "item": item}
         raise HTTPException(status_code=404, detail=f"Suggestion not found: {suggestion_id}")

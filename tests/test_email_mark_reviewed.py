@@ -77,7 +77,7 @@ class EmailMarkReviewedTests(unittest.TestCase):
         )
         return TestClient(app), service
 
-    def test_mark_reviewed_removes_suggestion_from_active_list(self) -> None:
+    def test_mark_reviewed_archives_suggestion_and_keeps_it_stored(self) -> None:
         client, service = self._build_client()
         response = client.post(
             "/email-agent/suggestions/s-1/status?secret=top-secret",
@@ -88,9 +88,9 @@ class EmailMarkReviewedTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["removed"])
         self.assertEqual(payload["item"]["status"], "reviewed")
-        remaining_ids = {item["suggestion_id"] for item in service._items}
-        self.assertNotIn("s-1", remaining_ids)
-        self.assertIn("s-2", remaining_ids)
+        reviewed = [item for item in service._items if item["suggestion_id"] == "s-1"][0]
+        self.assertEqual(reviewed["status"], "reviewed")
+        self.assertIn("reviewed_at", reviewed)
 
     def test_mark_copied_keeps_suggestion(self) -> None:
         client, service = self._build_client()
@@ -104,6 +104,43 @@ class EmailMarkReviewedTests(unittest.TestCase):
         self.assertFalse(payload["removed"])
         updated = [item for item in service._items if item["suggestion_id"] == "s-2"][0]
         self.assertEqual(updated["status"], "copied")
+
+    def test_list_reviewed_filters_items(self) -> None:
+        client, service = self._build_client()
+        response = client.post(
+            "/email-agent/suggestions/s-1/status?secret=top-secret",
+            json={"status": "reviewed"},
+        )
+        self.assertEqual(response.status_code, 200)
+        list_response = client.get(
+            "/email-agent/suggestions?status=reviewed&secret=top-secret",
+        )
+        self.assertEqual(list_response.status_code, 200)
+        payload = list_response.json()
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["items"][0]["suggestion_id"], "s-1")
+        self.assertEqual(payload["items"][0]["status"], "reviewed")
+
+    def test_unarchive_reviewed_suggestion_to_draft(self) -> None:
+        client, service = self._build_client()
+        reviewed = client.post(
+            "/email-agent/suggestions/s-1/status?secret=top-secret",
+            json={"status": "reviewed"},
+        )
+        self.assertEqual(reviewed.status_code, 200)
+        response = client.post(
+            "/email-agent/suggestions/s-1/status?secret=top-secret",
+            json={"status": "draft"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["removed"])
+        self.assertEqual(payload["item"]["status"], "draft")
+        updated = [item for item in service._items if item["suggestion_id"] == "s-1"][0]
+        self.assertEqual(updated["status"], "draft")
+        self.assertNotIn("reviewed_at", updated)
+        self.assertIn("unarchived_at", updated)
 
 
 if __name__ == "__main__":
