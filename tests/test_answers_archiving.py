@@ -73,6 +73,26 @@ class AnswersArchivingTests(unittest.TestCase):
         self.assertEqual(len(stored.get("items", [])), 1)
         self.assertEqual(stored["items"][0]["chat_id"], 2)
 
+    def test_unarchive_removes_snapshot_and_reopens_chat(self) -> None:
+        self._seed_conversation(chat_id=1001)
+        self.service.mark_chat_status(1001, "reviewed")
+        archived_before = self.service.list_archived_chats()
+        self.assertEqual(len(archived_before), 1)
+        archive_id = str(archived_before[0].get("archive_id") or "")
+
+        item = self.service.unarchive_chat(chat_id=1001, archive_id=archive_id)
+        self.assertEqual(item["status"], "pending")
+        self.assertEqual(item["chat_id"], 1001)
+        self.assertEqual(item["archive_id"], archive_id)
+
+        archived_after = self.service.list_archived_chats()
+        self.assertEqual(len(archived_after), 0)
+
+        active = self.service.list_chats_grouped()
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["chat_id"], 1001)
+        self.assertEqual(active[0]["status"], "pending")
+
 
 if __name__ == "__main__":
     unittest.main()

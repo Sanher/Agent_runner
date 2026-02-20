@@ -492,6 +492,7 @@ class AnswersAgentService:
             return default
 
     def _prune_archived_items(self, items: List[Dict[str, Any]], now_ts: int) -> List[Dict[str, Any]]:
+        # Keep only snapshots newer than the retention threshold.
         threshold = max(0, int(now_ts) - self.ARCHIVE_RETENTION_SECONDS)
         kept: List[Dict[str, Any]] = []
         for item in items:
@@ -505,6 +506,7 @@ class AnswersAgentService:
         return kept
 
     def _archive_chat_snapshot(self, chat: Dict[str, Any], archived_reason: str = "reviewed") -> Dict[str, Any]:
+        # Persist a point-in-time snapshot so operators can inspect reviewed chats later.
         now_ts = self._now_ts()
         chat_id = self._as_int(chat.get("chat_id"), 0)
         snapshot = {
@@ -559,6 +561,13 @@ class AnswersAgentService:
             archived_total=len(items),
             archived_reason=snapshot["archived_reason"],
         )
+        self.logger.info(
+            "Chat archived (chat_id=%s, archive_id=%s, reason=%s, archived_at=%s)",
+            chat_id,
+            snapshot["archive_id"],
+            snapshot["archived_reason"],
+            snapshot["archived_at"],
+        )
         return snapshot
 
     def list_archived_chats(self) -> List[Dict[str, Any]]:
@@ -579,6 +588,81 @@ class AnswersAgentService:
         filtered.sort(key=lambda item: self._as_int(item.get("archived_at"), 0), reverse=True)
         self._debug("Archived chats loaded", archived_count=len(filtered))
         return filtered
+
+    def unarchive_chat(self, chat_id: int, archive_id: str = "") -> Dict[str, Any]:
+        target_chat_id = int(chat_id)
+        target_archive_id = str(archive_id or "").strip()
+        selected: Optional[Dict[str, Any]] = None
+        now_ts = self._now_ts()
+
+        with self._lock:
+            data = self._load_archived_chats()
+            items = data.get("items", [])
+            if not isinstance(items, list):
+                items = []
+            before_prune = len(items)
+            items = self._prune_archived_items(items, now_ts)
+            pruned_count = max(0, before_prune - len(items))
+            if pruned_count:
+                self._debug("Archived retention cleanup applied", removed=pruned_count)
+
+            selected_idx = -1
+            if target_archive_id:
+                # Exact restore target when UI sends a specific archive id.
+                for idx, item in enumerate(items):
+                    if not isinstance(item, dict):
+                        continue
+                    if (
+                        self._as_int(item.get("chat_id"), -1) == target_chat_id
+                        and str(item.get("archive_id") or "").strip() == target_archive_id
+                    ):
+                        selected_idx = idx
+                        break
+            else:
+                # Fallback restore: pick the newest snapshot for the chat.
+                newest_ts = -1
+                for idx, item in enumerate(items):
+                    if not isinstance(item, dict):
+                        continue
+                    if self._as_int(item.get("chat_id"), -1) != target_chat_id:
+                        continue
+                    archived_at = self._as_int(item.get("archived_at"), 0)
+                    if archived_at > newest_ts:
+                        newest_ts = archived_at
+                        selected_idx = idx
+
+            if selected_idx >= 0:
+                selected = dict(items[selected_idx]) if isinstance(items[selected_idx], dict) else {}
+                del items[selected_idx]
+                data["items"] = items
+                self._save_json(self.archived_chats_path, data)
+            elif pruned_count:
+                data["items"] = items
+                self._save_json(self.archived_chats_path, data)
+
+        if not selected:
+            self.logger.warning("Unarchive requested but archive not found (chat_id=%s, archive_id=%s)", target_chat_id, target_archive_id)
+            raise RuntimeError(f"Archive not found: {target_chat_id}")
+
+        suggested_reply = str(selected.get("suggested_reply") or "")
+        state = self._persist_chat_review_state(
+            target_chat_id,
+            suggested_reply=suggested_reply,
+            status="pending",
+            extra={"manual_review_required": True, "reviewed_last_received_ts": 0},
+        )
+        self.logger.info(
+            "Chat unarchived (chat_id=%s, archive_id=%s)",
+            target_chat_id,
+            str(selected.get("archive_id") or ""),
+        )
+        return {
+            "chat_id": target_chat_id,
+            "archive_id": str(selected.get("archive_id") or ""),
+            "status": state.get("status", "pending"),
+            "suggested_reply": suggested_reply,
+            "updated_at": state.get("updated_at", ""),
+        }
 
     def _chat_context(self, chat_id: int) -> Dict[str, Any]:
         for chat in self.list_chats_grouped():

@@ -100,6 +100,19 @@ class _FakeAnswersService:
         self.chats[0]["status"] = status
         return {"chat_id": 1001, "status": status, "updated_at": "2026-02-18T11:14:00"}
 
+    def unarchive_chat(self, chat_id: int, archive_id: str = ""):
+        if int(chat_id) != 1001:
+            raise RuntimeError(f"Archive not found: {chat_id}")
+        self.chats[0]["status"] = "pending"
+        self.archived_chats = [item for item in self.archived_chats if str(item.get("archive_id")) != str(archive_id)]
+        return {
+            "chat_id": 1001,
+            "archive_id": archive_id,
+            "status": "pending",
+            "suggested_reply": self.chats[0]["suggested_reply"],
+            "updated_at": "2026-02-18T11:15:00",
+        }
+
     openai_api_key = ""
     telegram_bot_token = ""
     data_dir = "/tmp/answers-agent-tests"
@@ -144,6 +157,19 @@ class AnswersRouterTests(unittest.TestCase):
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["items"][0]["chat_id"], 1001)
         self.assertEqual(payload["items"][0]["archived_reason"], "reviewed")
+
+    def test_unarchive_chat(self) -> None:
+        client, service = self._build_client()
+        response = client.post(
+            "/answers-agent/chats/1001/unarchive?secret=top-secret",
+            json={"archive_id": "arch-1"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["item"]["status"], "pending")
+        self.assertEqual(service.chats[0]["status"], "pending")
+        self.assertEqual(len(service.archived_chats), 0)
 
     def test_suggest_changes_not_found_returns_404(self) -> None:
         client, _ = self._build_client()

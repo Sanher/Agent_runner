@@ -222,6 +222,7 @@ def create_ui_router(job_secret: str) -> APIRouter:
     <button onclick=\"checkNew()\" id=\"checkNewBtn\">Check new messages</button>
     <button onclick=\"openManualModal()\" id=\"manualBtn\">Generate from text</button>
     <button onclick=\"loadSuggestions()\">Refresh list</button>
+    <button id=\"emailReviewedToggleBtn\" onclick=\"toggleReviewedSuggestions()\">View reviewed</button>
 
     <div class=\"card\">
       <h3>Email settings</h3>
@@ -240,6 +241,11 @@ def create_ui_router(job_secret: str) -> APIRouter:
       <button onclick=\"saveSettings()\" id=\"saveSettingsBtn\">Save email settings</button>
     </div>
     <div id=\"list\"></div>
+    <div id=\"emailReviewedSection\" class=\"card\" style=\"display:none;\">
+      <h3>Reviewed emails</h3>
+      <p class=\"muted\">Reviewed suggestions are hidden from the active list until unarchived.</p>
+      <div id=\"reviewedList\"></div>
+    </div>
   </section>
 
   <section id=\"tabIssue\" class=\"tab-panel\">
@@ -348,6 +354,7 @@ let workdayTickerTimer = null;
 let workdayTickerAlignTimer = null;
 let workdayTickerSnapshot = null;
 let answersArchivedVisible = false;
+let emailReviewedVisible = false;
 let emailSettingsCache = {
   default_from_email: '',
   default_cc_email: ''
@@ -1008,11 +1015,14 @@ async function markStatus(id, status) {
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
     if (status === 'reviewed' && data.removed) {
-      setStatus('Suggestion marked as reviewed and removed from active list');
+      setStatus('Suggestion marked as reviewed and archived from active list');
+    } else if (status === 'draft') {
+      setStatus('Suggestion moved back to active list');
     } else {
       setStatus(`Suggestion marked as ${status}`);
     }
     await loadSuggestions();
+    if (emailReviewedVisible) await loadReviewedSuggestions();
   } catch (err) {
     setStatus(`Error updating suggestion status: ${err}`);
   }
@@ -1252,6 +1262,7 @@ async function loadArchivedAnswersChats() {
 
   for (const item of data.items) {
     const chatId = String(item.chat_id || '');
+    const archiveId = String(item.archive_id || '');
     const messages = Array.isArray(item.received_messages) ? item.received_messages : [];
     const renderedMessages = messages.length
       ? messages.map((message) => {
@@ -1276,8 +1287,28 @@ async function loadArchivedAnswersChats() {
       <div class="answers-messages">${renderedMessages}</div>
       <p><b>Suggested reply at archive time</b></p>
       <textarea class="field" style="min-height:100px" readonly>${escapeHtml(item.suggested_reply || '')}</textarea>
+      <div>
+        <button onclick="unarchiveAnswersChat('${escapeHtml(chatId)}','${escapeHtml(archiveId)}')">Unarchive</button>
+      </div>
     `;
     list.appendChild(card);
+  }
+}
+
+async function unarchiveAnswersChat(chatId, archiveId) {
+  try {
+    const r = await fetch(withAnswersSecret(`/chats/${encodeURIComponent(chatId)}/unarchive`), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({archive_id: String(archiveId || '')})
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    setStatus(`Chat ${chatId} unarchived`);
+    await loadAnswersChats();
+    await loadArchivedAnswersChats();
+  } catch (err) {
+    setStatus(`Error unarchiving chat: ${err}`);
   }
 }
 
@@ -1349,12 +1380,15 @@ async function loadSuggestions() {
     return;
   }
   const list = document.getElementById('list');
+  const activeItems = Array.isArray(data.items)
+    ? data.items.filter((item) => String(item.status || 'draft') !== 'reviewed')
+    : [];
   list.innerHTML = '';
-  if (!Array.isArray(data.items) || data.items.length === 0) {
+  if (activeItems.length === 0) {
     list.innerHTML = `<div class="card"><p class="muted">No suggestions yet. Use <b>Check new messages</b> or <b>Generate from text</b>.</p></div>`;
     return;
   }
-  for (const item of data.items.reverse()) {
+  for (const item of activeItems.reverse()) {
     const div = document.createElement('div');
     div.className = 'card';
     const safeId = String(item.suggestion_id || '');
@@ -1384,6 +1418,55 @@ async function loadSuggestions() {
     if (textarea) {
       textarea.value = String(item.suggested_reply || '');
     }
+  }
+}
+
+function toggleReviewedSuggestions() {
+  emailReviewedVisible = !emailReviewedVisible;
+  const btn = document.getElementById('emailReviewedToggleBtn');
+  const section = document.getElementById('emailReviewedSection');
+  if (!btn || !section) return;
+  section.style.display = emailReviewedVisible ? 'block' : 'none';
+  btn.innerText = emailReviewedVisible ? 'Hide reviewed' : 'View reviewed';
+  if (emailReviewedVisible) {
+    loadReviewedSuggestions();
+  }
+}
+
+async function loadReviewedSuggestions() {
+  const list = document.getElementById('reviewedList');
+  if (!list) return;
+  let data;
+  try {
+    const r = await fetch(withEmailSecret('/suggestions?status=reviewed'));
+    data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+  } catch (err) {
+    setStatus(`Error loading reviewed suggestions: ${err}`);
+    return;
+  }
+
+  const reviewedItems = Array.isArray(data.items) ? data.items : [];
+  list.innerHTML = '';
+  if (reviewedItems.length === 0) {
+    list.innerHTML = `<p class="muted">No reviewed emails.</p>`;
+    return;
+  }
+
+  for (const item of reviewedItems.reverse()) {
+    const safeId = String(item.suggestion_id || '');
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div><b>${escapeHtml(item.subject || '')}</b></div>
+      <div class='muted'>From: ${escapeHtml(item.from || '')} | Reviewed: ${escapeHtml(formatTs(item.reviewed_at || item.updated_at))}</div>
+      <p><b>Suggested reply</b></p>
+      <textarea class='field' style='min-height:100px' readonly>${escapeHtml(item.suggested_reply || '')}</textarea>
+      <div>
+        <button onclick="markStatus('${safeId}','draft')">Unarchive</button>
+      </div>
+    `;
+    list.appendChild(card);
   }
 }
 

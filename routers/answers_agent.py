@@ -23,6 +23,10 @@ class MarkChatStatusRequest(BaseModel):
     status: str
 
 
+class UnarchiveChatRequest(BaseModel):
+    archive_id: str | None = None
+
+
 class TelegramWebhookPayload(BaseModel):
     update_id: int | None = None
     message: Dict[str, Any] | None = None
@@ -81,6 +85,22 @@ def create_answers_router(
         items = service.list_archived_chats()
         logger.debug("Answers archived chat list requested (count=%s, auth=%s)", len(items), auth_source)
         return {"ok": True, "count": len(items), "items": items}
+
+    @manual_router.post("/chats/{chat_id}/unarchive")
+    def unarchive_chat(chat_id: int, req: UnarchiveChatRequest, request: Request):
+        auth_source = ensure_auth(request)
+        try:
+            item = service.unarchive_chat(chat_id=chat_id, archive_id=req.archive_id or "")
+            logger.info("Answers chat unarchived (chat_id=%s, auth=%s)", chat_id, auth_source)
+            return {"ok": True, "item": item}
+        except RuntimeError as err:
+            detail = str(err)
+            status_code = 404 if detail.startswith("Archive not found:") else 400
+            logger.warning("Invalid unarchive request in answers (chat_id=%s, detail=%s)", chat_id, detail)
+            raise HTTPException(status_code=status_code, detail=detail) from err
+        except Exception as err:
+            logger.exception("Failure in /answers-agent/chats/%s/unarchive", chat_id)
+            raise HTTPException(status_code=500, detail=str(err)) from err
 
     @manual_router.post("/chats/{chat_id}/suggest")
     def suggest_changes(chat_id: int, req: SuggestChangesRequest, request: Request):

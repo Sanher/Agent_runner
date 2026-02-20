@@ -28,6 +28,7 @@ class AnswersUiLanguageTests(unittest.TestCase):
         self.assertIn("Suggested reply", html)
         self.assertIn("Status:", html)
         self.assertIn("View archived", html)
+        self.assertIn("Unarchive", html)
         self.assertIn("Archived conversations are auto-deleted after 7 days.", html)
         self.assertNotIn("No hay chats con mensajes recibidos todavía.", html)
         self.assertNotIn("Mensajes recibidos", html)
