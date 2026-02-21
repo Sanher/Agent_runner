@@ -21,8 +21,23 @@ def create_ui_router(job_secret: str) -> APIRouter:
 <html data-theme="dark">
 <head>
   <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\" />
   <title>Agent Runner UI</title>
   <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      max-width: 100%;
+      overflow-x: hidden;
+      -webkit-text-size-adjust: 100%;
+    }
+
     :root {
       --bg: #020617;
       --bg-soft: #0f172a;
@@ -89,6 +104,7 @@ def create_ui_router(job_secret: str) -> APIRouter:
       max-width: 1320px;
       margin: 0 auto;
       align-items: start;
+      min-width: 0;
     }
 
     .sidebar {
@@ -103,7 +119,10 @@ def create_ui_router(job_secret: str) -> APIRouter:
     }
 
     .brand-title { margin: 0; }
-    .content-area { min-width: 0; }
+    .content-area {
+      min-width: 0;
+      width: 100%;
+    }
 
     .card {
       border: 1px solid var(--card-border);
@@ -113,6 +132,8 @@ def create_ui_router(job_secret: str) -> APIRouter:
       margin-bottom: 14px;
       box-shadow: var(--shadow);
       backdrop-filter: blur(4px);
+      min-width: 0;
+      overflow-x: clip;
     }
 
     pre {
@@ -269,7 +290,68 @@ def create_ui_router(job_secret: str) -> APIRouter:
       box-sizing: border-box;
     }
 
+    #tabIssue input.field,
+    #tabIssue select.field {
+      height: 44px;
+      min-height: 44px;
+    }
+
+    #tabIssue .muted input[type="checkbox"] {
+      width: 46px;
+      height: 28px;
+      margin: 0 10px 0 0;
+      vertical-align: middle;
+      border-radius: 999px;
+      border: 1px solid var(--input-border);
+      background: rgba(148, 163, 184, 0.22);
+      box-shadow: inset 0 1px 2px rgba(2, 6, 23, 0.35);
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      position: relative;
+      transition: background 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
+    }
+
+    #tabIssue .muted input[type="checkbox"]::before {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      background: #f8fafc;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.45);
+      transition: transform 0.22s ease;
+    }
+
+    #tabIssue .muted input[type="checkbox"]:checked {
+      background: linear-gradient(135deg, #2563eb, #0ea5e9);
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
+    }
+
+    #tabIssue .muted input[type="checkbox"]:checked::before {
+      transform: translateX(18px);
+    }
+
+    #tabIssue select.field {
+      padding-right: 38px;
+      -webkit-appearance: none;
+      appearance: none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+        linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+      background-position:
+        calc(100% - 18px) center,
+        calc(100% - 12px) center;
+      background-size: 6px 6px, 6px 6px;
+      background-repeat: no-repeat;
+    }
+
     input.field[type="date"] {
+      inline-size: 100%;
+      max-inline-size: 100%;
       padding-right: 12px;
     }
 
@@ -297,6 +379,7 @@ def create_ui_router(job_secret: str) -> APIRouter:
       .app-shell { grid-template-columns: 1fr; }
       .sidebar { position: static; }
       body { padding: 14px; }
+      .card { padding: 14px; }
       .theme-floating-btn {
         top: 10px;
         right: 10px;
