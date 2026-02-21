@@ -77,15 +77,55 @@ def create_issue_router(
         ensure_auth(request)
         ensure_config()
         try:
+            normalized_issue_type = str(req.issue_type or "").strip().lower()
+            issue_type = normalized_issue_type
+            repo = req.repo
+            as_new_feature = bool(req.as_new_feature)
+            as_third_party = bool(req.as_third_party)
+
+            # Priority rule:
+            # - comment mode is always neutral (task) and keeps user-selected repo
+            # - special UI aliases (new feature / third party *) only apply in create mode
+            if req.include_comment:
+                # Comment mode is neutral and should not trigger special management workflows.
+                issue_type = "task"
+                as_new_feature = False
+                as_third_party = False
+                logger.info(
+                    "Issue generate mapping: comment mode -> neutral task (repo=%s, original_type=%s)",
+                    repo,
+                    normalized_issue_type or "-",
+                )
+            elif normalized_issue_type == "new feature":
+                as_new_feature = True
+                issue_type = "feature"
+                repo = "management"
+                logger.info("Issue generate mapping: 'new feature' -> management feature flow")
+            elif normalized_issue_type == "third party bug":
+                as_third_party = True
+                issue_type = "bug"
+                repo = "management"
+                logger.info("Issue generate mapping: 'third party bug' -> management third-party flow")
+            elif normalized_issue_type == "third party feature":
+                as_third_party = True
+                issue_type = "feature"
+                repo = "management"
+                logger.info("Issue generate mapping: 'third party feature' -> management third-party flow")
+            elif normalized_issue_type == "third party task":
+                as_third_party = True
+                issue_type = "task"
+                repo = "management"
+                logger.info("Issue generate mapping: 'third party task' -> management third-party flow")
+
             item = service.generate_issue(
                 req.user_input,
-                req.issue_type,
-                req.repo,
+                issue_type,
+                repo,
                 req.unit,
                 req.include_comment,
                 comment_issue_number=req.comment_issue_number,
-                as_new_feature=req.as_new_feature,
-                as_third_party=req.as_third_party,
+                as_new_feature=as_new_feature,
+                as_third_party=as_third_party,
             )
             logger.info("Issue generated via API (issue_id=%s)", item.get("issue_id", ""))
             return {"ok": True, "item": item}

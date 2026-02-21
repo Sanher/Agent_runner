@@ -296,24 +296,42 @@ def create_ui_router(job_secret: str) -> APIRouter:
       min-height: 44px;
     }
 
-    #tabIssue .muted input[type="checkbox"] {
-      width: 46px;
+    #tabIssue .issue-toggle-group {
+      margin: 6px 0 12px;
+    }
+
+    #tabIssue .issue-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      user-select: none;
+      color: var(--text);
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+
+    #tabIssue .issue-toggle-input {
+      position: absolute;
+      opacity: 0;
+      width: 1px;
+      height: 1px;
+      pointer-events: none;
+    }
+
+    #tabIssue .issue-toggle-track {
+      position: relative;
+      width: 48px;
       height: 28px;
-      margin: 0 10px 0 0;
-      vertical-align: middle;
       border-radius: 999px;
       border: 1px solid var(--input-border);
       background: rgba(148, 163, 184, 0.22);
-      box-shadow: inset 0 1px 2px rgba(2, 6, 23, 0.35);
-      cursor: pointer;
-      appearance: none;
-      -webkit-appearance: none;
-      position: relative;
       transition: background 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
+      box-shadow: inset 0 1px 2px rgba(2, 6, 23, 0.35);
+      flex: 0 0 auto;
     }
 
-    #tabIssue .muted input[type="checkbox"]::before {
-      content: "";
+    #tabIssue .issue-toggle-knob {
       position: absolute;
       top: 3px;
       left: 3px;
@@ -325,14 +343,51 @@ def create_ui_router(job_secret: str) -> APIRouter:
       transition: transform 0.22s ease;
     }
 
-    #tabIssue .muted input[type="checkbox"]:checked {
+    #tabIssue .issue-toggle-input:focus-visible + .issue-toggle-track {
+      outline: 2px solid var(--input-focus);
+      outline-offset: 2px;
+    }
+
+    #tabIssue .issue-toggle-input:checked + .issue-toggle-track {
       background: linear-gradient(135deg, #2563eb, #0ea5e9);
       border-color: #38bdf8;
       box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
     }
 
-    #tabIssue .muted input[type="checkbox"]:checked::before {
-      transform: translateX(18px);
+    #tabIssue .issue-toggle-input:checked + .issue-toggle-track .issue-toggle-knob {
+      transform: translateX(20px);
+    }
+
+    #tabIssue .issue-toggle-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #tabIssue .issue-toggle-state {
+      font-size: 11px;
+      padding: 2px 7px;
+      min-width: 34px;
+      border-radius: 999px;
+      border: 1px solid var(--input-border);
+      color: var(--muted);
+      background: var(--input-bg);
+      transition: all 0.2s ease;
+      text-align: center;
+    }
+
+    #tabIssue .issue-toggle-state::before {
+      content: 'OFF';
+    }
+
+    #tabIssue .issue-toggle-input:checked ~ .issue-toggle-label .issue-toggle-state {
+      color: #ffffff;
+      border-color: #38bdf8;
+      background: #0284c7;
+    }
+
+    #tabIssue .issue-toggle-input:checked ~ .issue-toggle-label .issue-toggle-state::before {
+      content: 'ON';
     }
 
     #tabIssue select.field {
@@ -469,38 +524,53 @@ def create_ui_router(job_secret: str) -> APIRouter:
   <section id=\"tabIssue\" class=\"tab-panel\">
     <div class=\"card\">
       <h3>Generate issue draft</h3>
-      <label class=\"muted\">Issue type</label>
-      <select id=\"issueIssueType\" class=\"field\">
-        <option value=\"bug\">bug</option>
-        <option value=\"feature\">feature</option>
-        <option value=\"task\">task</option>
-        <option value=\"enhacement\">enhacement</option>
-        <option value=\"blockchain\">blockchain</option>
-        <option value=\"exchange\">exchange</option>
-        <option value=\"blockchain exchange\">blockchain exchange</option>
-      </select>
-      <textarea id=\"issueUserInput\" class=\"field\" style=\"min-height:130px\" placeholder=\"Information\"></textarea>
-      <label class=\"muted\">Repository</label>
-      <select id=\"issueRepo\" class=\"field\">
-        <option value=\"backend\">backend</option>
-        <option value=\"frontend\">frontend</option>
-        <option value=\"management\">management</option>
-      </select>
-      <label class=\"muted\">Unit</label>
-      <select id=\"issueUnit\" class=\"field\">
-        <option value=\"core\">core</option>
-        <option value=\"custome\">custome</option>
-        <option value=\"bot\">bot</option>
-        <option value=\"integrations\">integrations</option>
-        <option value=\"marketing\">marketing</option>
-        <option value=\"it\">it</option>
-      </select>
-      <label class=\"muted\">Issue number to reply to</label>
-      <input id=\"issueCommentNumber\" class=\"field\" placeholder=\"e.g. 12345\">
-      <div class=\"muted\" style=\"margin:6px 0 10px\">
-        <label><input type=\"checkbox\" id=\"issueAddAsComment\" onchange=\"toggleIssueMode('comment')\" /> Add as comment</label><br/>
-        <label><input type=\"checkbox\" id=\"issueAddAsNewFeature\" onchange=\"toggleIssueMode('feature')\" /> Add as new feature</label><br/>
-        <label><input type=\"checkbox\" id=\"issueAsThirdParty\" onchange=\"toggleIssueMode('third-party')\" /> Third party</label>
+      <div class=\"issue-toggle-group\">
+        <label class=\"issue-toggle\" for=\"issueAddAsComment\">
+          <input type=\"checkbox\" id=\"issueAddAsComment\" class=\"issue-toggle-input\" onchange=\"toggleIssueMode()\" />
+          <span class=\"issue-toggle-track\" aria-hidden=\"true\"><span class=\"issue-toggle-knob\"></span></span>
+          <span class=\"issue-toggle-label\">Add as comment <span class=\"issue-toggle-state\"></span></span>
+        </label>
+      </div>
+      <div id=\"issueIssueTypeRow\">
+        <label class=\"muted\">Issue type</label>
+        <select id=\"issueIssueType\" class=\"field\">
+          <option value=\"bug\">bug</option>
+          <option value=\"feature\">feature</option>
+          <option value=\"task\">task</option>
+          <option value=\"enhacement\">enhacement</option>
+          <option value=\"blockchain\">blockchain</option>
+          <option value=\"exchange\">exchange</option>
+          <option value=\"new feature\">new feature</option>
+          <option value=\"third party bug\">third party bug</option>
+          <option value=\"third party feature\">third party feature</option>
+          <option value=\"third party task\">third party task</option>
+        </select>
+      </div>
+      <div id=\"issueRepoRow\">
+        <label class=\"muted\">Repository</label>
+        <select id=\"issueRepo\" class=\"field\">
+          <option value=\"backend\">backend</option>
+          <option value=\"frontend\">frontend</option>
+          <option value=\"management\">management</option>
+        </select>
+      </div>
+      <div id=\"issueUnitRow\">
+        <label class=\"muted\">Unit</label>
+        <select id=\"issueUnit\" class=\"field\">
+          <option value=\"core\">core</option>
+          <option value=\"custome\">custome</option>
+          <option value=\"bot\">bot</option>
+          <option value=\"integrations\">integrations</option>
+          <option value=\"marketing\">marketing</option>
+          <option value=\"it\">it</option>
+        </select>
+      </div>
+      <div id=\"issueCommentNumberRow\">
+        <label class=\"muted\">Issue number to reply to</label>
+        <input id=\"issueCommentNumber\" class=\"field\" placeholder=\"e.g. 12345\">
+      </div>
+      <div id=\"issueUserInputRow\">
+        <textarea id=\"issueUserInput\" class=\"field\" style=\"min-height:130px\" placeholder=\"Information\"></textarea>
       </div>
       <button onclick=\"generateIssueDraft()\" id=\"issueGenerateBtn\">Generate draft</button>
       <div id=\"issueGenerateStatus\" class=\"muted\"></div>
@@ -944,77 +1014,95 @@ async function refreshIssuePanel() {
   return;
 }
 
-function toggleIssueMode(mode) {
+function toggleIssueMode() {
   const addComment = document.getElementById('issueAddAsComment');
-  const addFeature = document.getElementById('issueAddAsNewFeature');
-  const addThirdParty = document.getElementById('issueAsThirdParty');
   const issueType = document.getElementById('issueIssueType');
   const repo = document.getElementById('issueRepo');
   const unit = document.getElementById('issueUnit');
   const commentNumber = document.getElementById('issueCommentNumber');
+  const issueTypeRow = document.getElementById('issueIssueTypeRow');
+  const repoRow = document.getElementById('issueRepoRow');
+  const unitRow = document.getElementById('issueUnitRow');
+  const commentNumberRow = document.getElementById('issueCommentNumberRow');
+  const userInput = document.getElementById('issueUserInput');
+  const userInputRow = document.getElementById('issueUserInputRow');
 
-  let isComment = addComment.checked;
-  let isNewFeature = addFeature.checked;
-  let isThirdParty = addThirdParty.checked;
+  const isComment = addComment.checked;
+  const selectedType = String(issueType.value || '').toLowerCase();
+  const isManagementSpecial = selectedType === 'new feature' || selectedType.startsWith('third party ');
 
-  if (mode === 'comment' && isComment) {
-    addFeature.checked = false;
-    addThirdParty.checked = false;
-    isNewFeature = false;
-    isThirdParty = false;
-  } else if (mode === 'feature' && isNewFeature) {
-    addComment.checked = false;
-    addThirdParty.checked = false;
-    isComment = false;
-    isThirdParty = false;
-  } else if (mode === 'third-party' && isThirdParty) {
-    addComment.checked = false;
-    addFeature.checked = false;
-    isComment = false;
-    isNewFeature = false;
-  } else if (isComment && (isNewFeature || isThirdParty)) {
-    addComment.checked = false;
-    isComment = false;
-  } else if (isNewFeature && isThirdParty) {
-    addThirdParty.checked = false;
-    isThirdParty = false;
-  }
-
+  // Two visual modes:
+  // - comment mode: only repo + issue number + comment text
+  // - create mode: full issue form
   if (isComment) {
+    if (issueTypeRow) issueTypeRow.style.display = 'none';
+    if (unitRow) unitRow.style.display = 'none';
+    if (commentNumberRow) commentNumberRow.style.display = 'block';
+    if (repoRow) repoRow.style.display = 'block';
+    if (userInputRow) userInputRow.style.display = 'block';
     issueType.disabled = true;
-    repo.disabled = true;
+    repo.disabled = false;
     unit.disabled = true;
     commentNumber.disabled = false;
-  } else if (isNewFeature) {
-    issueType.value = 'feature';
-    issueType.disabled = true;
-    repo.value = 'management';
-    repo.disabled = true;
-    unit.disabled = false;
-    commentNumber.disabled = true;
-  } else if (isThirdParty) {
-    repo.value = 'management';
-    repo.disabled = true;
+    if (userInput) userInput.placeholder = 'Comment text';
+  } else if (isManagementSpecial) {
+    if (issueTypeRow) issueTypeRow.style.display = 'block';
+    if (unitRow) unitRow.style.display = 'block';
+    if (commentNumberRow) commentNumberRow.style.display = 'none';
+    if (repoRow) repoRow.style.display = 'block';
+    if (userInputRow) userInputRow.style.display = 'block';
     issueType.disabled = false;
+    repo.value = 'management';
+    repo.disabled = true;
     unit.disabled = false;
     commentNumber.disabled = true;
+    if (userInput) userInput.placeholder = 'Information';
   } else {
+    if (issueTypeRow) issueTypeRow.style.display = 'block';
+    if (unitRow) unitRow.style.display = 'block';
+    if (commentNumberRow) commentNumberRow.style.display = 'none';
+    if (repoRow) repoRow.style.display = 'block';
+    if (userInputRow) userInputRow.style.display = 'block';
     issueType.disabled = false;
     repo.disabled = false;
     unit.disabled = false;
     commentNumber.disabled = true;
+    if (userInput) userInput.placeholder = 'Information';
   }
 }
 
 async function generateIssueDraft() {
   const input = document.getElementById('issueUserInput').value.trim();
-  const issueType = document.getElementById('issueIssueType').value;
-  const repo = document.getElementById('issueRepo').value;
+  const selectedIssueType = document.getElementById('issueIssueType').value;
+  let issueType = selectedIssueType;
+  let repo = document.getElementById('issueRepo').value;
   const unit = document.getElementById('issueUnit').value;
   const includeComment = !!document.getElementById('issueAddAsComment').checked;
-  const asNewFeature = !!document.getElementById('issueAddAsNewFeature').checked;
-  const asThirdParty = !!document.getElementById('issueAsThirdParty').checked;
+  let asNewFeature = false;
+  let asThirdParty = false;
   const commentNumber = document.getElementById('issueCommentNumber').value.trim();
+  if (includeComment) {
+    // Comment mode is neutral and must never trigger special management mappings.
+    issueType = 'task';
+    asNewFeature = false;
+    asThirdParty = false;
+  } else if (selectedIssueType === 'new feature') {
+    asNewFeature = true;
+    issueType = 'feature';
+    repo = 'management';
+  } else if (selectedIssueType === 'third party bug') {
+    asThirdParty = true;
+    issueType = 'bug';
+    repo = 'management';
+  } else if (selectedIssueType === 'third party feature') {
+    asThirdParty = true;
+    issueType = 'feature';
+    repo = 'management';
+  } else if (selectedIssueType === 'third party task') {
+    asThirdParty = true;
+    issueType = 'task';
+    repo = 'management';
+  }
   if (!input) {
     document.getElementById('issueGenerateStatus').innerText = 'Please provide issue context';
     return;
@@ -1047,6 +1135,11 @@ async function generateIssueDraft() {
     currentIssue = data.item || null;
     document.getElementById('issueGeneratedJson').innerText = JSON.stringify(currentIssue || {}, null, 2);
     document.getElementById('issueGenerateStatus').innerText = `Draft generated: ${currentIssue && currentIssue.issue_id ? currentIssue.issue_id : 'unknown'}`;
+    if (includeComment) {
+      document.getElementById('issueAddAsComment').checked = false;
+      document.getElementById('issueCommentNumber').value = '';
+      toggleIssueMode();
+    }
     await refreshIssuePanel();
   } catch (err) {
     document.getElementById('issueGenerateStatus').innerText = `Error generating issue draft: ${err}`;
@@ -1705,6 +1798,7 @@ async function loadReviewedSuggestions() {
 }
 
 toggleIssueMode();
+document.getElementById('issueIssueType')?.addEventListener('change', () => toggleIssueMode());
 showTab('workday');
 startWorkdayTicker();
 if (workdayPollTimer) clearInterval(workdayPollTimer);
