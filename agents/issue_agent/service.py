@@ -23,7 +23,7 @@ REPO_ALIASES = {
     "backend": "backend",
     "management": "management",
 }
-UNITS = {"core", "custome", "custom", "bot", "integrations", "marketing", "it"}
+UNITS = {"core", "customer", "custome", "custom", "bot", "integrations", "marketing", "it"}
 REPO_SLUGS = {"frontend": "frontend", "backend": "backend", "management": "management"}
 ISSUE_TEMPLATE_BY_REPO_AND_TYPE = {
     ("frontend", "bug"): "bug_report.yml",
@@ -234,8 +234,8 @@ class IssueAgentService:
 
     def _normalize_unit(self, value: str) -> str:
         normalized = str(value or "").strip().lower()
-        if normalized == "custom":
-            return "custome"
+        if normalized in {"custom", "custome"}:
+            return "customer"
         return normalized if normalized in UNITS else "core"
 
     @staticmethod
@@ -882,6 +882,7 @@ class IssueAgentService:
     def _frontend_unit_label(unit: str) -> str:
         mapping = {
             "core": "Core",
+            "customer": "Customer",
             "custome": "Customer",
             "custom": "Customer",
             "bot": "Bot",

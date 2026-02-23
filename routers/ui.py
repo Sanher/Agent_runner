@@ -559,7 +559,7 @@ def create_ui_router(job_secret: str) -> APIRouter:
         <label class=\"muted\">Unit</label>
         <select id=\"issueUnit\" class=\"field\">
           <option value=\"core\">core</option>
-          <option value=\"custome\">custome</option>
+          <option value=\"customer\">customer</option>
           <option value=\"bot\">bot</option>
           <option value=\"integrations\">integrations</option>
           <option value=\"marketing\">marketing</option>
