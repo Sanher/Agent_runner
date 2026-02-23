@@ -24,6 +24,8 @@ class AnswersAgentService:
     """Service to review and respond to answers_agent conversations grouped by chat."""
     # Retain archived conversations for one week, then purge automatically.
     ARCHIVE_RETENTION_SECONDS = 7 * 24 * 60 * 60
+    # Spam fingerprints are kept long-term to improve future spam detection.
+    # Unlike archived chat snapshots, these records store only anonymized message shape/tags.
 
     def __init__(
         self,
@@ -60,12 +62,14 @@ class AnswersAgentService:
         self.archived_chats_path = self.data_dir / "archived_chats.json"
         self.pending_issues_path = self.data_dir / "pending_issues.json"
         self.blocked_users_path = self.data_dir / "blocked_users.json"
+        self.spam_patterns_path = self.data_dir / "spam_patterns.json"
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._ensure_file(self.conversations_path, {"users": {}})
         self._ensure_file(self.review_state_path, {"chats": {}})
         self._ensure_file(self.archived_chats_path, {"items": []})
         self._ensure_file(self.pending_issues_path, {"issues": []})
         self._ensure_file(self.blocked_users_path, {"blocked": []})
+        self._ensure_file(self.spam_patterns_path, {"items": []})
         self._debug(
             "Answers service initialized",
             data_dir=str(self.data_dir),
@@ -420,16 +424,50 @@ class AnswersAgentService:
             messages.append(user_record)
             self._save_json(self.conversations_path, conversations)
 
-        if is_spam_like_message(text):
+        spam_by_rule = is_spam_like_message(text)
+        spam_by_pattern = False
+        if not spam_by_rule:
+            spam_by_pattern = self._match_registered_spam_pattern(text)
+
+        if spam_by_rule or spam_by_pattern:
+            last_received_ts = self._now_ts()
+            spam_source = "auto_rule" if spam_by_rule else "learned_pattern"
+            if spam_by_pattern and not spam_by_rule:
+                fingerprint = self._spam_fingerprint(text)
+                self.logger.info(
+                    "Message matched learned spam fingerprint (chat_id=%s, user_id=%s, signature=%s)",
+                    chat_id,
+                    user_id,
+                    str(fingerprint.get("signature") or ""),
+                )
             self._mark_user_blocked(user_id)
             self._persist_chat_review_state(
                 chat_id,
                 suggested_reply="",
-                status="reviewed",
-                extra={"blocked": True, "blocked_reason": "spam"},
+                status="spam",
+                extra={
+                    "blocked": True,
+                    "blocked_reason": "spam",
+                    "reviewed_last_received_ts": last_received_ts,
+                    "last_received_ts": last_received_ts,
+                    "manual_review_required": False,
+                    "business_connection_id": business_connection_id or "",
+                    "source": message_kind or "message",
+                    "spam_detected_by": spam_source,
+                },
             )
-            self.logger.warning("Spam-like message detected and blocked (chat_id=%s, user_id=%s)", chat_id, user_id)
-            return {"ok": True, "action": "spam-detected"}
+            self._register_spam_pattern(text, source=spam_source)
+            # Keep spam chats in the archived history and out of active review queue.
+            chat_snapshot = self._chat_context_including_reviewed(chat_id)
+            chat_snapshot["status"] = "spam"
+            self._archive_chat_snapshot(chat_snapshot, archived_reason="spam_auto")
+            self.logger.warning(
+                "Spam-like message detected and blocked (chat_id=%s, user_id=%s, source=%s)",
+                chat_id,
+                user_id,
+                spam_source,
+            )
+            return {"ok": True, "action": "spam-detected", "status": "spam", "spam_source": spam_source}
 
         # Manual mode: do not auto-generate AI/workflow suggestions on webhook intake.
         # Suggested text is generated only via "AI suggest" or manual edit actions.
@@ -484,6 +522,15 @@ class AnswersAgentService:
             items = []
         return {"items": items}
 
+    def _load_spam_patterns(self) -> Dict[str, Any]:
+        raw = self._load_json(self.spam_patterns_path, {"items": []})
+        if not isinstance(raw, dict):
+            return {"items": []}
+        items = raw.get("items", [])
+        if not isinstance(items, list):
+            items = []
+        return {"items": items}
+
     @staticmethod
     def _as_int(value: Any, default: int = 0) -> int:
         try:
@@ -504,6 +551,173 @@ class AnswersAgentService:
             if archived_at >= threshold:
                 kept.append(item)
         return kept
+
+    @staticmethod
+    def _bucket_count(value: int) -> str:
+        numeric = max(0, int(value))
+        if numeric == 0:
+            return "0"
+        if numeric == 1:
+            return "1"
+        if numeric <= 3:
+            return "2-3"
+        if numeric <= 8:
+            return "4-8"
+        return "9+"
+
+    @staticmethod
+    def _bucket_words(value: int) -> str:
+        numeric = max(0, int(value))
+        if numeric <= 8:
+            return "0-8"
+        if numeric <= 20:
+            return "9-20"
+        if numeric <= 60:
+            return "21-60"
+        return "61+"
+
+    def _spam_fingerprint(self, text: str) -> Dict[str, Any]:
+        # Build a reusable fingerprint without storing literal user text.
+        raw = str(text or "")
+        lowered = raw.lower()
+        words = re.findall(r"[a-z0-9_]+", lowered)
+        url_count = len(re.findall(r"(?:https?://|www\.)", lowered))
+        mention_count = len(re.findall(r"@\w+", lowered))
+        digit_token_count = len(re.findall(r"\b\d+(?:\.\d+)?(?:[km])?\b", lowered))
+        long_token_count = sum(1 for word in words if len(word) >= 24)
+
+        tag_checks = {
+            "promo": ("promo", "promotion", "promote", "partnership", "sponsored"),
+            "token_offer": ("token", "coin", "listing", "qa"),
+            "social_push": ("youtube", "telegram", "twitter", "followers", "subscribers"),
+            "sales_pitch": ("our services", "buy", "sell", "reach", "network"),
+            "contains_links": ("http://", "https://", "www."),
+        }
+        tags: List[str] = []
+        for tag, markers in tag_checks.items():
+            if any(marker in lowered for marker in markers):
+                tags.append(tag)
+        if mention_count > 0:
+            tags.append("contains_mentions")
+        if digit_token_count >= 3:
+            tags.append("numeric_claims")
+        if long_token_count > 0:
+            tags.append("long_tokens")
+
+        tags = sorted(set(tags))
+        shape = {
+            "words": self._bucket_words(len(words)),
+            "urls": self._bucket_count(url_count),
+            "mentions": self._bucket_count(mention_count),
+            "numbers": self._bucket_count(digit_token_count),
+            "long_tokens": self._bucket_count(long_token_count),
+        }
+        signature = (
+            f"tags={','.join(tags)}"
+            f"|words={shape['words']}"
+            f"|urls={shape['urls']}"
+            f"|mentions={shape['mentions']}"
+            f"|numbers={shape['numbers']}"
+            f"|long_tokens={shape['long_tokens']}"
+        )
+        return {
+            "signature": signature,
+            "tags": tags,
+            "shape": shape,
+        }
+
+    def _match_registered_spam_pattern(self, text: str) -> bool:
+        fingerprint = self._spam_fingerprint(text)
+        if not self._is_specific_spam_fingerprint(fingerprint):
+            return False
+        signature = str(fingerprint.get("signature") or "")
+        if not signature:
+            return False
+        with self._lock:
+            data = self._load_spam_patterns()
+            items = data.get("items", [])
+            if not isinstance(items, list):
+                items = []
+        return any(
+            str(item.get("signature") or "") == signature and bool(item.get("match_enabled", True))
+            for item in items
+            if isinstance(item, dict)
+        )
+
+    def _register_spam_pattern(self, text: str, source: str) -> None:
+        fingerprint = self._spam_fingerprint(text)
+        source_key = str(source or "unknown").strip().lower() or "unknown"
+        is_specific = self._is_specific_spam_fingerprint(fingerprint)
+        # Manual review can persist non-specific examples for operator context,
+        # but those patterns are not used for automatic blocking.
+        if not is_specific and source_key != "manual_review":
+            self._debug("Skipping non-specific spam fingerprint registration", source=source_key)
+            return
+        signature = str(fingerprint.get("signature") or "")
+        if not signature:
+            return
+
+        now_ts = self._now_ts()
+        current_hits = 1
+        current_match_enabled = is_specific
+        with self._lock:
+            data = self._load_spam_patterns()
+            items = data.get("items", [])
+            if not isinstance(items, list):
+                items = []
+
+            matched = False
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("signature") or "") != signature:
+                    continue
+                item["last_seen_at"] = now_ts
+                item["hits"] = self._as_int(item.get("hits"), 0) + 1
+                current_hits = self._as_int(item.get("hits"), 1)
+                current_match_enabled = bool(item.get("match_enabled", True)) or is_specific
+                item["match_enabled"] = current_match_enabled
+                source_counts = item.get("source_counts", {})
+                if not isinstance(source_counts, dict):
+                    source_counts = {}
+                source_counts[source_key] = self._as_int(source_counts.get(source_key), 0) + 1
+                item["source_counts"] = source_counts
+                matched = True
+                break
+
+            if not matched:
+                items.append(
+                    {
+                        "pattern_id": f"spam-pattern-{now_ts}-{len(items) + 1}",
+                        "signature": signature,
+                        "tags": list(fingerprint.get("tags") or []),
+                        "shape": dict(fingerprint.get("shape") or {}),
+                        "hits": 1,
+                        "source_counts": {source_key: 1},
+                        "match_enabled": is_specific,
+                        "first_seen_at": now_ts,
+                        "last_seen_at": now_ts,
+                    }
+                )
+            data["items"] = items
+            self._save_json(self.spam_patterns_path, data)
+        self._debug(
+            "Spam pattern registered",
+            signature=signature,
+            source=source_key,
+            patterns_total=len(items),
+            hits=current_hits,
+            match_enabled=current_match_enabled,
+        )
+
+    @staticmethod
+    def _is_specific_spam_fingerprint(fingerprint: Dict[str, Any]) -> bool:
+        tags = {str(tag).strip() for tag in list(fingerprint.get("tags") or []) if str(tag).strip()}
+        if not tags:
+            return False
+        strong_tags = {"promo", "token_offer", "social_push", "sales_pitch", "contains_links"}
+        # Require at least one strong semantic spam marker to avoid broad false positives.
+        return bool(tags.intersection(strong_tags))
 
     def _archive_chat_snapshot(self, chat: Dict[str, Any], archived_reason: str = "reviewed") -> Dict[str, Any]:
         # Persist a point-in-time snapshot so operators can inspect reviewed chats later.
@@ -751,7 +965,7 @@ class AnswersAgentService:
         if not isinstance(review_chats, dict):
             review_chats = {}
 
-        hidden_reviewed = 0
+        hidden_closed = 0
         for chat_key, chat in grouped.items():
             received = sorted(chat["received_messages"], key=lambda item: int(item.get("timestamp") or 0))
             context = sorted(chat["context_messages"], key=lambda item: int(item.get("timestamp") or 0))
@@ -763,12 +977,12 @@ class AnswersAgentService:
             current_last_received_ts = int(chat.get("last_received_ts") or 0)
             if (
                 not include_reviewed
-                and status == "reviewed"
+                and status in {"reviewed", "spam"}
                 and reviewed_snapshot_ts > 0
                 and current_last_received_ts <= reviewed_snapshot_ts
             ):
-                # Hide reviewed chats until a new incoming message arrives.
-                hidden_reviewed += 1
+                # Hide closed chats until a new incoming message arrives.
+                hidden_closed += 1
                 continue
 
             suggested_reply = str(
@@ -799,7 +1013,7 @@ class AnswersAgentService:
             chats=len(items),
             users=len(users),
             review_chats=len(review_chats),
-            hidden_reviewed=hidden_reviewed,
+            hidden_closed=hidden_closed,
         )
         return items
 
@@ -1085,21 +1299,49 @@ class AnswersAgentService:
 
     def mark_chat_status(self, chat_id: int, status: str) -> Dict[str, Any]:
         normalized = str(status or "").strip().lower()
-        valid = {"pending", "draft", "reviewed", "sent"}
+        valid = {"pending", "draft", "reviewed", "sent", "spam"}
         if normalized not in valid:
             raise RuntimeError(f"status must be one of {sorted(valid)}")
         chat = self._chat_context_including_reviewed(chat_id)
         extra: Dict[str, Any] = {}
-        if normalized == "reviewed":
+        if normalized in {"reviewed", "spam"}:
             extra["reviewed_last_received_ts"] = int(chat.get("last_received_ts") or 0)
             extra["manual_review_required"] = False
-            self._archive_chat_snapshot(chat, archived_reason="reviewed")
+        if normalized == "spam":
+            extra["blocked"] = True
+            extra["blocked_reason"] = "spam"
+            extra["spam_detected_by"] = "manual"
+            user_id = self._as_int(chat.get("user_id"), 0)
+            if user_id > 0:
+                self._mark_user_blocked(user_id)
+            latest_user_text = ""
+            received_messages = chat.get("received_messages", [])
+            if isinstance(received_messages, list):
+                for message in reversed(received_messages):
+                    if not isinstance(message, dict):
+                        continue
+                    latest_user_text = str(message.get("content") or "").strip()
+                    if latest_user_text:
+                        break
+            if latest_user_text:
+                self._register_spam_pattern(latest_user_text, source="manual_review")
+            else:
+                self._debug("Manual spam mark had no message content available", chat_id=chat_id)
         state = self._persist_chat_review_state(
             chat_id,
             suggested_reply=str(chat.get("suggested_reply", "")),
             status=normalized,
             extra=extra,
         )
+        if normalized == "reviewed":
+            archived_chat = dict(chat)
+            archived_chat["status"] = "reviewed"
+            self._archive_chat_snapshot(archived_chat, archived_reason="reviewed")
+        elif normalized == "spam":
+            archived_chat = dict(chat)
+            archived_chat["status"] = "spam"
+            self._archive_chat_snapshot(archived_chat, archived_reason="manual_spam")
+            self.logger.warning("Chat manually marked as spam and blocked (chat_id=%s)", chat_id)
         self.logger.info("Chat status updated (chat_id=%s, status=%s)", chat_id, normalized)
         return {
             "chat_id": int(chat_id),
@@ -1107,10 +1349,42 @@ class AnswersAgentService:
             "updated_at": state.get("updated_at", ""),
         }
 
+    def _list_spam_patterns(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            data = self._load_spam_patterns()
+            items = data.get("items", [])
+            if not isinstance(items, list):
+                items = []
+        valid_items = [item for item in items if isinstance(item, dict)]
+        valid_items.sort(key=lambda item: self._as_int(item.get("last_seen_at"), 0), reverse=True)
+        return valid_items
+
+    @staticmethod
+    def _spam_source_totals(patterns: List[Dict[str, Any]]) -> Dict[str, int]:
+        totals: Dict[str, int] = {}
+        for item in patterns:
+            if not isinstance(item, dict):
+                continue
+            source_counts = item.get("source_counts", {})
+            if not isinstance(source_counts, dict):
+                continue
+            for source, value in source_counts.items():
+                key = str(source or "").strip()
+                if not key:
+                    continue
+                try:
+                    numeric_value = int(value or 0)
+                except Exception:
+                    numeric_value = 0
+                totals[key] = int(totals.get(key, 0)) + numeric_value
+        return totals
+
     def get_debug_status(self) -> Dict[str, Any]:
         # Quick diagnostic summary for HA without manual file inspection.
         items = self.list_chats_grouped()
         archived_items = self.list_archived_chats()
+        spam_patterns = self._list_spam_patterns()
+        spam_source_totals = self._spam_source_totals(spam_patterns)
         return {
             "ok": True,
             "data_dir": str(self.data_dir),
@@ -1119,13 +1393,17 @@ class AnswersAgentService:
             "archived_chats_path": str(self.archived_chats_path),
             "pending_issues_path": str(self.pending_issues_path),
             "blocked_users_path": str(self.blocked_users_path),
+            "spam_patterns_path": str(self.spam_patterns_path),
             "has_openai_api_key": bool(self.openai_api_key),
             "has_telegram_token": bool(self.telegram_bot_token),
             "has_webhook_secret": bool(self.telegram_webhook_secret),
             "chats_count": len(items),
             "archived_count": len(archived_items),
+            "spam_patterns_count": len(spam_patterns),
+            "spam_source_totals": spam_source_totals,
             "pending_count": sum(1 for item in items if str(item.get("status", "")) == "pending"),
             "draft_count": sum(1 for item in items if str(item.get("status", "")) == "draft"),
             "reviewed_count": sum(1 for item in items if str(item.get("status", "")) == "reviewed"),
+            "spam_count": sum(1 for item in items if str(item.get("status", "")) == "spam"),
             "sent_count": sum(1 for item in items if str(item.get("status", "")) == "sent"),
         }

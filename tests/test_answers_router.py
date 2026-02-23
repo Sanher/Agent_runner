@@ -148,6 +148,18 @@ class AnswersRouterTests(unittest.TestCase):
         self.assertEqual(payload["item"]["status"], "reviewed")
         self.assertEqual(service.chats[0]["status"], "reviewed")
 
+    def test_mark_chat_status_spam(self) -> None:
+        client, service = self._build_client()
+        response = client.post(
+            "/answers-agent/chats/1001/status?secret=top-secret",
+            json={"status": "spam"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["item"]["status"], "spam")
+        self.assertEqual(service.chats[0]["status"], "spam")
+
     def test_list_archived_chats(self) -> None:
         client, _ = self._build_client()
         response = client.get("/answers-agent/chats/archived?secret=top-secret")

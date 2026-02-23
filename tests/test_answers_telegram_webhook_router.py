@@ -134,6 +134,47 @@ class AnswersTelegramWebhookRouterTests(unittest.TestCase):
         self.assertEqual(chat_state.get("suggested_reply"), "Give me a second to check this.")
         self.assertTrue(chat_state.get("manual_review_required"))
 
+    def test_webhook_marks_spam_as_blocked_and_hides_from_active_list(self) -> None:
+        response = self.client.post(
+            "/answers_agent/webhook/telegram",
+            json={
+                "update_id": 5,
+                "message": {"text": "QA promo for my token, buy now", "chat": {"id": 7007}, "from": {"id": 8008}},
+            },
+            headers={"x-telegram-bot-api-secret-token": "my-telegram-secret"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload.get("ok"))
+        self.assertEqual(payload.get("action"), "spam-detected")
+        self.assertEqual(payload.get("status"), "spam")
+        self.assertEqual(payload.get("spam_source"), "auto_rule")
+
+        review_state = json.loads(self.service.review_state_path.read_text(encoding="utf-8"))
+        chat_state = review_state.get("chats", {}).get("7007", {})
+        self.assertEqual(chat_state.get("status"), "spam")
+        self.assertEqual(chat_state.get("blocked_reason"), "spam")
+        self.assertFalse(chat_state.get("manual_review_required"))
+        self.assertGreater(int(chat_state.get("reviewed_last_received_ts") or 0), 0)
+
+        active_chats = self.service.list_chats_grouped()
+        self.assertEqual(len(active_chats), 0)
+
+        archived = self.service.list_archived_chats()
+        self.assertEqual(len(archived), 1)
+        self.assertEqual(archived[0].get("chat_id"), 7007)
+        self.assertEqual(archived[0].get("archived_reason"), "spam_auto")
+
+        spam_patterns = json.loads(self.service.spam_patterns_path.read_text(encoding="utf-8"))
+        items = spam_patterns.get("items", [])
+        self.assertEqual(len(items), 1)
+        pattern = items[0]
+        self.assertTrue(pattern.get("signature"))
+        self.assertGreater(int(pattern.get("hits") or 0), 0)
+        self.assertNotIn("text", pattern)
+        self.assertNotIn("content", pattern)
+        self.assertNotIn("message", pattern)
+
 
 if __name__ == "__main__":
     unittest.main()

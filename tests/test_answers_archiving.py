@@ -93,6 +93,65 @@ class AnswersArchivingTests(unittest.TestCase):
         self.assertEqual(active[0]["chat_id"], 1001)
         self.assertEqual(active[0]["status"], "pending")
 
+    def test_mark_spam_blocks_and_archives_chat(self) -> None:
+        self._seed_conversation(chat_id=2001, user_id=777)
+        result = self.service.mark_chat_status(2001, "spam")
+        self.assertEqual(result["status"], "spam")
+
+        active = self.service.list_chats_grouped()
+        self.assertEqual(len(active), 0)
+
+        archived = self.service.list_archived_chats()
+        self.assertEqual(len(archived), 1)
+        self.assertEqual(archived[0]["chat_id"], 2001)
+        self.assertEqual(archived[0]["archived_reason"], "manual_spam")
+        self.assertEqual(archived[0]["status"], "spam")
+
+        blocked = self.service._load_json(self.service.blocked_users_path, {"blocked": []})
+        self.assertIn(777, blocked.get("blocked", []))
+
+        spam_patterns = self.service._load_json(self.service.spam_patterns_path, {"items": []})
+        items = spam_patterns.get("items", [])
+        self.assertEqual(len(items), 1)
+        pattern = items[0]
+        self.assertTrue(pattern.get("signature"))
+        self.assertTrue(pattern.get("shape"))
+        self.assertNotIn("text", pattern)
+        self.assertNotIn("content", pattern)
+        self.assertNotIn("message", pattern)
+
+    def test_spam_patterns_are_persistent_across_retention_window(self) -> None:
+        now_ts = self.service._now_ts()
+        stale_ts = now_ts - self.service.ARCHIVE_RETENTION_SECONDS - 30
+        self.service._save_json(
+            self.service.spam_patterns_path,
+            {
+                "items": [
+                    {
+                        "pattern_id": "old",
+                        "signature": "old-signature",
+                        "tags": ["promo"],
+                        "shape": {"words": "21-60"},
+                        "hits": 2,
+                        "source_counts": {"manual_review": 2},
+                        "first_seen_at": stale_ts,
+                        "last_seen_at": stale_ts,
+                    }
+                ]
+            },
+        )
+
+        self.service._register_spam_pattern("QA promo for my token, buy now", source="manual_review")
+        stored = self.service._load_json(self.service.spam_patterns_path, {"items": []})
+        items = stored.get("items", [])
+        self.assertEqual(len(items), 2)
+        self.assertTrue(any(str(item.get("pattern_id")) == "old" for item in items))
+        self.assertTrue(any(str(item.get("pattern_id")) != "old" for item in items))
+
+    def test_registered_spam_pattern_can_be_reused_for_detection(self) -> None:
+        self.service._register_spam_pattern("QA promo for my token, buy now", source="manual_review")
+        self.assertTrue(self.service._match_registered_spam_pattern("QA promo for MY token, buy now!!!"))
+
 
 if __name__ == "__main__":
     unittest.main()
