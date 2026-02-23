@@ -1285,15 +1285,20 @@ async function submitIssueDraft() {
       body: JSON.stringify({
         issue: currentIssue,
         selectors: {},
-        non_headless: true
+        non_headless: false
       })
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
-    const finalUrl = String(((data || {}).result || {}).final_url || '').trim();
+    const result = (data || {}).result || {};
+    const finalUrl = String(result.final_url || '').trim();
+    const runId = String(result.run_id || '').trim();
+    const artifactsDir = String(result.artifacts_dir || '').trim();
     if (finalUrl) currentIssue.generated_link = finalUrl;
     appendIssuePlaywrightLog('Playwright execution finished successfully.');
     if (finalUrl) appendIssuePlaywrightLog(`Issue created/updated at: ${finalUrl}`);
+    if (runId) appendIssuePlaywrightLog(`Run ID: ${runId}`);
+    if (artifactsDir) appendIssuePlaywrightLog(`Artifacts path: ${artifactsDir}`);
     document.getElementById('issueSubmitStatus').innerText = finalUrl
       ? `Submitted: ${finalUrl}`
       : 'Submitted via Playwright';

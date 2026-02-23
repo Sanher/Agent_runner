@@ -28,7 +28,7 @@ class SubmitIssueRequest(BaseModel):
         default_factory=dict,
         description="CSS/XPath selectors for title, description, comment, issue_type, repo, unit, comment_issue_number, dropdown, dropdown_option, submit",
     )
-    non_headless: bool = True
+    non_headless: bool = False
 
 
 class ReportRequest(BaseModel):

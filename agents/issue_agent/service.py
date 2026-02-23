@@ -152,6 +152,24 @@ class IssueAgentService:
     def now_id() -> str:
         return time.strftime("%Y%m%d-%H%M%S")
 
+    def _artifact_dir(self, job: str, run_id: str) -> Path:
+        run_dir = self.data_dir / "runs" / str(job).strip() / str(run_id).strip()
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return run_dir
+
+    def _capture_artifact(self, page, run_dir: Path, tag: str) -> Dict[str, str]:
+        png_path = run_dir / f"{tag}.png"
+        html_path = run_dir / f"{tag}.html"
+        page.screenshot(path=str(png_path), full_page=True)
+        html_path.write_text(page.content(), encoding="utf-8")
+        self._debug(
+            "Issue artifact captured",
+            tag=tag,
+            png=str(png_path),
+            html=str(html_path),
+        )
+        return {"png": str(png_path), "html": str(html_path)}
+
     @staticmethod
     def _sanitize_url_for_log(raw_url: str) -> str:
         if not raw_url:
@@ -715,13 +733,21 @@ class IssueAgentService:
         if not self._run_lock.acquire(blocking=False):
             raise RuntimeError("Issue flow already running")
 
+        run_id_raw = str(issue.get("issue_id", "")).strip() or f"issue-{self.now_id()}"
+        run_id = re.sub(r"[^a-zA-Z0-9._-]+", "-", run_id_raw).strip("-") or f"issue-{self.now_id()}"
+        run_dir = self._artifact_dir("issue_flow", run_id)
+        artifacts: Dict[str, Dict[str, str]] = {}
+        page = None
+
         try:
             # `non_headless=True` allows manual login in the browser session.
             self.logger.info(
-                "Starting issue submission via Playwright (issue_id=%s, non_headless=%s, target=%s)",
+                "Starting issue submission via Playwright (issue_id=%s, run_id=%s, non_headless=%s, target=%s, artifacts=%s)",
                 issue.get("issue_id", ""),
+                run_id,
                 non_headless,
                 self._sanitize_url_for_log(issue.get("generated_link", "")),
+                run_dir,
             )
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=not non_headless)
@@ -735,6 +761,7 @@ class IssueAgentService:
                 issue_type = str(issue.get("issue_type", "")).strip().lower()
                 target_url = str(issue.get("generated_link", "")).strip() or self._repo_new_issue_url(repo, issue_type)
                 page.goto(target_url, wait_until="domcontentloaded")
+                artifacts["start_loaded"] = self._capture_artifact(page, run_dir, "start_loaded")
                 self._debug(
                     "Playwright target loaded",
                     repo=repo,
@@ -790,6 +817,7 @@ class IssueAgentService:
 
                 # Short pause to confirm actions and allow immediate manual interaction when needed.
                 page.wait_for_timeout(1200)
+                artifacts["final_click"] = self._capture_artifact(page, run_dir, "final_click")
                 try:
                     self.storage_state_path.parent.mkdir(parents=True, exist_ok=True)
                     context.storage_state(path=str(self.storage_state_path))
@@ -808,13 +836,19 @@ class IssueAgentService:
                     "comment": issue.get("comment", ""),
                 }
             )
-            self._append_event("issue_submitted", issue_id=issue.get("issue_id", ""))
+            self._append_event(
+                "issue_submitted",
+                issue_id=issue.get("issue_id", ""),
+                run_id=run_id,
+                artifacts_dir=str(run_dir),
+            )
             self._persist_status({"ok": True, "message": "Issue submitted", "updated_at": datetime.now().isoformat()})
             self.logger.info("Issue submission completed (issue_id=%s)", issue.get("issue_id", ""))
             final_url = page.url if "page" in locals() else str(issue.get("generated_link", "")).strip()
             self.logger.info(
-                "Issue flow finish: issue_id=%s issue_url=%s project=%s unit=%s team=%s status=%s sprint=%s creation_date=%s parent=%s",
+                "Issue flow finish: issue_id=%s run_id=%s issue_url=%s project=%s unit=%s team=%s status=%s sprint=%s creation_date=%s parent=%s artifacts=%s",
                 issue.get("issue_id", ""),
+                run_id,
                 self._sanitize_url_for_log(final_url),
                 self.project_name or "-",
                 issue.get("unit", "") or "-",
@@ -823,22 +857,36 @@ class IssueAgentService:
                 "Current",
                 "Today",
                 "true" if str(issue.get("issue_type", "")).strip().lower() == "bug" or issue.get("as_third_party") else "false",
+                run_dir,
             )
             return {
                 "ok": True,
                 "submitted": True,
                 "issue_id": issue.get("issue_id"),
                 "final_url": final_url,
+                "run_id": run_id,
+                "artifacts_dir": str(run_dir),
+                "artifacts": artifacts,
             }
         except PlaywrightTimeoutError as err:
+            if page is not None:
+                try:
+                    artifacts["failed"] = self._capture_artifact(page, run_dir, "failed")
+                except Exception as capture_err:
+                    self.logger.warning("Issue flow: timeout artifact capture failed: %s", capture_err)
             self._persist_status({"ok": False, "message": f"Timeout Playwright: {err}", "updated_at": datetime.now().isoformat()})
-            self._append_event("issue_submit_failed", reason="timeout")
-            self.logger.exception("Playwright timeout during issue submission")
+            self._append_event("issue_submit_failed", reason="timeout", run_id=run_id, artifacts_dir=str(run_dir))
+            self.logger.exception("Playwright timeout during issue submission (run_id=%s)", run_id)
             raise
         except Exception as err:
+            if page is not None:
+                try:
+                    artifacts["failed"] = self._capture_artifact(page, run_dir, "failed")
+                except Exception as capture_err:
+                    self.logger.warning("Issue flow: failure artifact capture failed: %s", capture_err)
             self._persist_status({"ok": False, "message": f"Playwright failure: {err}", "updated_at": datetime.now().isoformat()})
-            self._append_event("issue_submit_failed", reason=str(err))
-            self.logger.exception("Issue submission failed via Playwright")
+            self._append_event("issue_submit_failed", reason=str(err), run_id=run_id, artifacts_dir=str(run_dir))
+            self.logger.exception("Issue submission failed via Playwright (run_id=%s)", run_id)
             raise
         finally:
             self._run_lock.release()
