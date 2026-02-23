@@ -213,6 +213,20 @@ class WorkdayAgentService:
         with self._status_lock:
             return dict(self._runtime_state)
 
+    @staticmethod
+    def _runtime_resume_fields(state: Dict[str, Any]) -> Dict[str, Any]:
+        keys = (
+            "planned_first_ts",
+            "first_click_ts",
+            "planned_start_break_ts",
+            "start_break_ts",
+            "planned_stop_break_ts",
+            "stop_break_ts",
+            "planned_final_ts",
+            "final_click_ts",
+        )
+        return {key: state.get(key) for key in keys}
+
     def _artifact_dir(self, job: str, run_id: str) -> Path:
         d = self.data_dir / "runs" / job / run_id
         d.mkdir(parents=True, exist_ok=True)
@@ -420,6 +434,35 @@ class WorkdayAgentService:
         items = items[-max(1, min(limit, 1000)) :]
         return {"ok": True, "count": len(items), "items": items}
 
+    def _infer_click_ts_from_events(self, run_id: str, click_name: str) -> float:
+        events = self.get_runtime_events(limit=1000)
+        if not events.get("ok"):
+            return 0.0
+        items = events.get("items", [])
+        if not isinstance(items, list):
+            return 0.0
+
+        for item in reversed(items):
+            if str(item.get("event", "")) != "click_webhook_sent":
+                continue
+            if run_id and str(item.get("run_id", "")) != run_id:
+                continue
+            meta = item.get("meta", {})
+            if not isinstance(meta, dict):
+                continue
+            if str(meta.get("click_name", "")) != click_name:
+                continue
+            payload_meta = meta.get("meta", {})
+            executed_at = ""
+            if isinstance(payload_meta, dict):
+                executed_at = str(payload_meta.get("executed_at", "")).strip()
+            if not executed_at:
+                executed_at = str(item.get("ts", "")).strip()
+            parsed = self._safe_parse_iso_datetime(executed_at)
+            if parsed is not None:
+                return float(parsed.timestamp())
+        return 0.0
+
     def get_daily_click_history(self, day: str = "") -> Dict[str, Any]:
         # Filters click webhook events to build the daily click history.
         target_day = day.strip() or datetime.now().strftime("%Y-%m-%d")
@@ -485,18 +528,36 @@ class WorkdayAgentService:
         if failed_phase not in self.ACTIVE_PHASES:
             raise RuntimeError("The failure cannot be retried automatically")
 
+        run_id = str(state.get("run_id", "")).strip()
+        first_click_ts = state.get("first_click_ts")
+        start_break_ts = state.get("start_break_ts")
+        stop_break_ts = state.get("stop_break_ts")
+
+        if self._safe_float(first_click_ts) <= 0:
+            inferred = self._infer_click_ts_from_events(run_id=run_id, click_name="start_click")
+            if inferred > 0:
+                first_click_ts = inferred
+        if self._safe_float(start_break_ts) <= 0:
+            inferred = self._infer_click_ts_from_events(run_id=run_id, click_name="start_break_click")
+            if inferred > 0:
+                start_break_ts = inferred
+        if self._safe_float(stop_break_ts) <= 0:
+            inferred = self._infer_click_ts_from_events(run_id=run_id, click_name="stop_break_click")
+            if inferred > 0:
+                stop_break_ts = inferred
+
         self._set_runtime_state(
             failed_phase,
             "Manual retry requested",
-            run_id=state.get("run_id", ""),
+            run_id=run_id,
             job=state.get("job", "workday_flow"),
             ok=None,
             planned_first_ts=state.get("planned_first_ts"),
-            first_click_ts=state.get("first_click_ts"),
+            first_click_ts=first_click_ts,
             planned_start_break_ts=state.get("planned_start_break_ts"),
-            start_break_ts=state.get("start_break_ts"),
+            start_break_ts=start_break_ts,
             planned_stop_break_ts=state.get("planned_stop_break_ts"),
-            stop_break_ts=state.get("stop_break_ts"),
+            stop_break_ts=stop_break_ts,
             planned_final_ts=state.get("planned_final_ts"),
             retry_requested_at=datetime.now().isoformat(),
         )
@@ -717,10 +778,35 @@ class WorkdayAgentService:
         except Exception:
             self.logger.exception("Could not save click failure snapshot")
 
+    @staticmethod
+    def _pick_largest_visible_locator(page, selector: str, timeout_ms: int = 15_000):
+        page.wait_for_selector(selector, timeout=timeout_ms)
+        group = page.locator(selector)
+        count = group.count()
+        best = None
+        best_area = -1.0
+
+        for idx in range(count):
+            loc = group.nth(idx)
+            try:
+                if not loc.is_visible():
+                    continue
+                box = loc.bounding_box()
+                if not box:
+                    continue
+                area = float(box.get("width", 0.0)) * float(box.get("height", 0.0))
+                if area > best_area:
+                    best = loc
+                    best_area = area
+            except Exception:
+                continue
+
+        return best if best is not None else group.first
+
     def _humanized_click(self, page, selector: str, timeout_ms: int = 15_000, context_label: str = "click") -> None:
         try:
             page.wait_for_selector(selector, timeout=timeout_ms)
-            locator = page.locator(selector).first
+            locator = self._pick_largest_visible_locator(page, selector, timeout_ms=timeout_ms)
             try:
                 locator.scroll_into_view_if_needed(timeout=timeout_ms)
             except Exception:
@@ -1104,7 +1190,8 @@ class WorkdayAgentService:
 
         except Exception as err:
             self.logger.exception("Error resuming job=%s run_id=%s", job_name, run_id)
-            prev_phase = str(self._get_runtime_state().get("phase", ""))
+            latest_state = self._get_runtime_state()
+            prev_phase = str(latest_state.get("phase", ""))
             retry_phase = prev_phase if prev_phase in self.ACTIVE_PHASES else ""
             if page is not None:
                 try:
@@ -1129,6 +1216,7 @@ class WorkdayAgentService:
                 ok=False,
                 error=str(err),
                 failed_phase=retry_phase,
+                **self._runtime_resume_fields(latest_state),
             )
             self.send_status(job_name, run_id, "error", f"Resume error: {err}", ok=False)
             self.send_final(job_name, run_id, result)
@@ -1454,7 +1542,8 @@ class WorkdayAgentService:
 
             except Exception as err:
                 self.logger.exception("Execution error job=%s run_id=%s", job_name, run_id)
-                prev_phase = str(self._get_runtime_state().get("phase", ""))
+                latest_state = self._get_runtime_state()
+                prev_phase = str(latest_state.get("phase", ""))
                 retry_phase = prev_phase if prev_phase in self.ACTIVE_PHASES else ""
                 try:
                     snap("failed")
@@ -1475,6 +1564,7 @@ class WorkdayAgentService:
                     ok=False,
                     error=str(err),
                     failed_phase=retry_phase,
+                    **self._runtime_resume_fields(latest_state),
                 )
                 self.send_status(job_name, run_id, "error", f"Execution error: {err}", ok=False)
                 self.send_final(job_name, run_id, result)
