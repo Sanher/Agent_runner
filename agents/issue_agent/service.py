@@ -770,54 +770,61 @@ class IssueAgentService:
                     target=self._sanitize_url_for_log(target_url),
                 )
 
-                if issue.get("include_comment") and str(issue.get("comment_issue_number", "")).strip():
-                    self._debug(
-                        "Executing comment mode flow",
-                        repo=repo,
-                        issue_number=str(issue.get("comment_issue_number", "")).strip(),
-                        close_issue=bool(issue.get("close_issue_on_comment")),
-                    )
-                    self._submit_issue_comment(page, issue)
-                elif repo == "management" and issue.get("as_third_party"):
-                    self._debug("Executing management third-party flow")
-                    self._submit_management_third_party_issue(page, issue)
-                elif repo == "management" and issue.get("as_new_feature"):
-                    self._debug("Executing management new-feature flow")
-                    self._submit_management_feature_issue(page, issue)
-                elif repo == "frontend":
-                    self._debug("Executing frontend issue flow", issue_type=issue_type)
-                    self._submit_frontend_issue(page, issue)
-                elif repo == "backend" and issue_type in {"bug", "feature", "task", "enhancement", "blockchain", "exchange"}:
-                    self._debug("Executing backend issue flow", issue_type=issue_type)
-                    self._submit_backend_issue(page, issue)
-                else:
-                    self._debug("Executing generic selector-based issue flow")
-                    self._fill_text_or_select(page, selectors["title"], issue["title"])
-                    self._fill_text_or_select(page, selectors["description"], issue["description"])
-                    self._fill_text_or_select(page, selectors.get("issue_type", ""), issue.get("issue_type", ""))
-                    self._fill_text_or_select(page, selectors.get("repo", ""), issue.get("repo", ""))
-                    self._fill_text_or_select(page, selectors.get("unit", ""), issue.get("unit", ""))
-                    self._fill_text_or_select(
-                        page,
-                        selectors.get("comment_issue_number", ""),
-                        issue.get("comment_issue_number", ""),
-                    )
+                try:
+                    if issue.get("include_comment") and str(issue.get("comment_issue_number", "")).strip():
+                        self._debug(
+                            "Executing comment mode flow",
+                            repo=repo,
+                            issue_number=str(issue.get("comment_issue_number", "")).strip(),
+                            close_issue=bool(issue.get("close_issue_on_comment")),
+                        )
+                        self._submit_issue_comment(page, issue)
+                    elif repo == "management" and issue.get("as_third_party"):
+                        self._debug("Executing management third-party flow")
+                        self._submit_management_third_party_issue(page, issue)
+                    elif repo == "management" and issue.get("as_new_feature"):
+                        self._debug("Executing management new-feature flow")
+                        self._submit_management_feature_issue(page, issue)
+                    elif repo == "frontend":
+                        self._debug("Executing frontend issue flow", issue_type=issue_type)
+                        self._submit_frontend_issue(page, issue)
+                    elif repo == "backend" and issue_type in {"bug", "feature", "task", "enhancement", "blockchain", "exchange"}:
+                        self._debug("Executing backend issue flow", issue_type=issue_type)
+                        self._submit_backend_issue(page, issue)
+                    else:
+                        self._debug("Executing generic selector-based issue flow")
+                        self._fill_text_or_select(page, selectors["title"], issue["title"])
+                        self._fill_text_or_select(page, selectors["description"], issue["description"])
+                        self._fill_text_or_select(page, selectors.get("issue_type", ""), issue.get("issue_type", ""))
+                        self._fill_text_or_select(page, selectors.get("repo", ""), issue.get("repo", ""))
+                        self._fill_text_or_select(page, selectors.get("unit", ""), issue.get("unit", ""))
+                        self._fill_text_or_select(
+                            page,
+                            selectors.get("comment_issue_number", ""),
+                            issue.get("comment_issue_number", ""),
+                        )
 
-                    dropdown = selectors.get("dropdown", "").strip()
-                    dropdown_option = selectors.get("dropdown_option", "").strip()
-                    if dropdown and dropdown_option:
-                        page.click(dropdown)
-                        page.click(dropdown_option)
+                        dropdown = selectors.get("dropdown", "").strip()
+                        dropdown_option = selectors.get("dropdown_option", "").strip()
+                        if dropdown and dropdown_option:
+                            page.click(dropdown)
+                            page.click(dropdown_option)
 
-                    if issue.get("comment") and selectors.get("comment", "").strip():
-                        self._fill_text_or_select(page, selectors["comment"], issue["comment"])
+                        if issue.get("comment") and selectors.get("comment", "").strip():
+                            self._fill_text_or_select(page, selectors["comment"], issue["comment"])
 
-                    if selectors.get("submit", "").strip():
-                        page.click(selectors["submit"])
+                        if selectors.get("submit", "").strip():
+                            page.click(selectors["submit"])
 
-                # Short pause to confirm actions and allow immediate manual interaction when needed.
-                page.wait_for_timeout(1200)
-                artifacts["final_click"] = self._capture_artifact(page, run_dir, "final_click")
+                    # Short pause to confirm actions and allow immediate manual interaction when needed.
+                    page.wait_for_timeout(1200)
+                    artifacts["final_click"] = self._capture_artifact(page, run_dir, "final_click")
+                except Exception:
+                    try:
+                        artifacts["failed"] = self._capture_artifact(page, run_dir, "failed")
+                    except Exception as capture_err:
+                        self.logger.warning("Issue flow: failure artifact capture failed: %s", capture_err)
+                    raise
                 try:
                     self.storage_state_path.parent.mkdir(parents=True, exist_ok=True)
                     context.storage_state(path=str(self.storage_state_path))
@@ -869,21 +876,11 @@ class IssueAgentService:
                 "artifacts": artifacts,
             }
         except PlaywrightTimeoutError as err:
-            if page is not None:
-                try:
-                    artifacts["failed"] = self._capture_artifact(page, run_dir, "failed")
-                except Exception as capture_err:
-                    self.logger.warning("Issue flow: timeout artifact capture failed: %s", capture_err)
             self._persist_status({"ok": False, "message": f"Timeout Playwright: {err}", "updated_at": datetime.now().isoformat()})
             self._append_event("issue_submit_failed", reason="timeout", run_id=run_id, artifacts_dir=str(run_dir))
             self.logger.exception("Playwright timeout during issue submission (run_id=%s)", run_id)
             raise
         except Exception as err:
-            if page is not None:
-                try:
-                    artifacts["failed"] = self._capture_artifact(page, run_dir, "failed")
-                except Exception as capture_err:
-                    self.logger.warning("Issue flow: failure artifact capture failed: %s", capture_err)
             self._persist_status({"ok": False, "message": f"Playwright failure: {err}", "updated_at": datetime.now().isoformat()})
             self._append_event("issue_submit_failed", reason=str(err), run_id=run_id, artifacts_dir=str(run_dir))
             self.logger.exception("Issue submission failed via Playwright (run_id=%s)", run_id)
@@ -956,6 +953,16 @@ class IssueAgentService:
         selected = option.get_attribute("aria-selected")
         if selected != "true":
             option.click()
+
+    def _open_projects_editor(self, page) -> None:
+        button = page.locator("button#create-issue-sidebar-projects-section-heading").first
+        if button.count() == 0:
+            button = page.get_by_role("button", name=re.compile("Edit Projects", re.I)).first
+        button.wait_for(state="visible", timeout=8000)
+        try:
+            button.click(timeout=8000)
+        except Exception:
+            button.click(timeout=8000, force=True)
 
     def _apply_bug_parent_relationship(
         self,
@@ -1145,11 +1152,19 @@ class IssueAgentService:
         markdown_area.fill("")
         markdown_area.fill(description)
 
-        page.locator("#create-issue-sidebar-projects-section-heading").first.click()
+        self._open_projects_editor(page)
         self._ensure_project_selected(page)
 
+        self.logger.info(
+            "Issue flow: clicking Create (repo=management, issue_type=feature, issue_id=%s)",
+            issue.get("issue_id", ""),
+        )
         page.locator('[data-testid="create-issue-button"]').first.click()
         page.wait_for_timeout(5000)
+        self.logger.info(
+            "Issue flow: create submitted, entering post-create fields (repo=management, issue_type=feature, url=%s)",
+            self._sanitize_url_for_log(page.url),
+        )
 
         self._apply_issue_type(page, "feature")
         self._apply_post_creation_fields(
@@ -1174,11 +1189,21 @@ class IssueAgentService:
         markdown_area.fill("")
         markdown_area.fill(description)
 
-        page.locator("#create-issue-sidebar-projects-section-heading").first.click()
+        self._open_projects_editor(page)
         self._ensure_project_selected(page)
 
+        self.logger.info(
+            "Issue flow: clicking Create (repo=management, issue_type=%s, issue_id=%s)",
+            issue_type,
+            issue.get("issue_id", ""),
+        )
         page.locator('[data-testid="create-issue-button"]').first.click()
         page.wait_for_timeout(5000)
+        self.logger.info(
+            "Issue flow: create submitted, entering post-create fields (repo=management, issue_type=%s, url=%s)",
+            issue_type,
+            self._sanitize_url_for_log(page.url),
+        )
 
         self._apply_issue_type(page, issue_type)
         self._apply_post_creation_fields(
@@ -1256,11 +1281,21 @@ class IssueAgentService:
         if issue_type == "blockchain":
             self._apply_blockchain_labels_and_type(page, issue.get("is_evm"))
 
-        page.locator("#create-issue-sidebar-projects-section-heading").first.click()
+        self._open_projects_editor(page)
         self._ensure_project_selected(page)
 
+        self.logger.info(
+            "Issue flow: clicking Create (repo=backend, issue_type=%s, issue_id=%s)",
+            issue_type,
+            issue.get("issue_id", ""),
+        )
         page.locator('[data-testid="create-issue-button"]').first.click()
         page.wait_for_timeout(5000)
+        self.logger.info(
+            "Issue flow: create submitted, entering post-create fields (repo=backend, issue_type=%s, url=%s)",
+            issue_type,
+            self._sanitize_url_for_log(page.url),
+        )
 
         self._apply_post_creation_fields(
             page,
@@ -1317,11 +1352,21 @@ class IssueAgentService:
             self._apply_bug_parent_relationship(page, str(issue.get("repo", "")))
 
         # Projects field: ensure the configured project is selected.
-        page.locator("#create-issue-sidebar-projects-section-heading").first.click()
+        self._open_projects_editor(page)
         self._ensure_project_selected(page)
 
+        self.logger.info(
+            "Issue flow: clicking Create (repo=frontend, issue_type=%s, issue_id=%s)",
+            issue_type,
+            issue.get("issue_id", ""),
+        )
         page.locator('[data-testid="create-issue-button"]').first.click()
         page.wait_for_timeout(5000)
+        self.logger.info(
+            "Issue flow: create submitted, entering post-create fields (repo=frontend, issue_type=%s, url=%s)",
+            issue_type,
+            self._sanitize_url_for_log(page.url),
+        )
 
         self._apply_post_creation_fields(
             page,
