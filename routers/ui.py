@@ -428,6 +428,32 @@ def create_ui_router(job_secret: str) -> APIRouter:
       background-repeat: no-repeat;
     }
 
+    #tabIssue .issue-runtime-grid {
+      display: grid;
+      grid-template-columns: minmax(320px, 1fr) minmax(280px, 0.9fr);
+      gap: 12px;
+      align-items: start;
+      margin-top: 10px;
+    }
+
+    #tabIssue .issue-log-panel {
+      border: 1px solid var(--input-border);
+      border-radius: 10px;
+      background: var(--input-bg);
+      padding: 10px;
+    }
+
+    #tabIssue .issue-log-title {
+      margin: 0 0 8px;
+      font-size: 0.95rem;
+      color: var(--text);
+    }
+
+    #tabIssue #issuePlaywrightLog {
+      min-height: 220px;
+      max-height: 320px;
+    }
+
     input.field[type="date"] {
       inline-size: 100%;
       max-inline-size: 100%;
@@ -459,6 +485,7 @@ def create_ui_router(job_secret: str) -> APIRouter:
       .sidebar { position: static; }
       body { padding: 14px; }
       .card { padding: 14px; }
+      #tabIssue .issue-runtime-grid { grid-template-columns: 1fr; }
       .theme-floating-btn {
         top: 10px;
         right: 10px;
@@ -599,7 +626,21 @@ def create_ui_router(job_secret: str) -> APIRouter:
       </div>
       <button onclick=\"generateIssueDraft()\" id=\"issueGenerateBtn\">Generate draft</button>
       <div id=\"issueGenerateStatus\" class=\"muted\"></div>
-      <pre id=\"issueGeneratedJson\">{}</pre>
+      <div id=\"issueDraftRuntimeGrid\" class=\"issue-runtime-grid\" style=\"display:none;\">
+        <div id=\"issueDraftEditor\" style=\"display:none;\">
+          <label class=\"muted\">Draft title (editable)</label>
+          <input id=\"issueDraftTitle\" class=\"field\" placeholder=\"Draft title\" />
+          <label class=\"muted\">Draft description (editable)</label>
+          <textarea id=\"issueDraftDescription\" class=\"field\" style=\"min-height:120px\" placeholder=\"Draft description\"></textarea>
+          <button onclick=\"submitIssueDraft()\" id=\"issueSubmitBtn\">Run in Playwright</button>
+          <div id=\"issueSubmitStatus\" class=\"muted\"></div>
+        </div>
+        <div id=\"issuePlaywrightLogWrap\" class=\"issue-log-panel\" style=\"display:none;\">
+          <h4 class=\"issue-log-title\">Playwright execution log</h4>
+          <div id=\"issuePlaywrightLog\" class=\"logs\">No execution logs yet.</div>
+        </div>
+      </div>
+      <pre id=\"issueGeneratedJson\" style=\"display:none;\">{}</pre>
     </div>
   </section>
 
@@ -672,6 +713,7 @@ let workdayTickerSnapshot = null;
 let answersArchivedVisible = false;
 let emailReviewedVisible = false;
 let statusDismissTimer = null;
+let issuePlaywrightLogLines = [];
 let emailSettingsCache = {
   default_from_email: '',
   default_cc_email: ''
@@ -1157,6 +1199,115 @@ function toggleIssueMode() {
   }
 }
 
+function clearIssuePlaywrightLog(hidePanel = false) {
+  // Client-side execution timeline for the latest submit run.
+  issuePlaywrightLogLines = [];
+  const logBox = document.getElementById('issuePlaywrightLog');
+  const logWrap = document.getElementById('issuePlaywrightLogWrap');
+  if (logBox) logBox.innerText = 'No execution logs yet.';
+  if (hidePanel && logWrap) logWrap.style.display = 'none';
+}
+
+function appendIssuePlaywrightLog(message) {
+  // Keep a bounded rolling buffer to avoid unbounded growth in long sessions.
+  const logBox = document.getElementById('issuePlaywrightLog');
+  const logWrap = document.getElementById('issuePlaywrightLogWrap');
+  if (!logBox || !logWrap) return;
+  const ts = new Date().toLocaleTimeString();
+  issuePlaywrightLogLines.push(`[${ts}] ${String(message || '').trim()}`);
+  if (issuePlaywrightLogLines.length > 150) {
+    issuePlaywrightLogLines = issuePlaywrightLogLines.slice(-150);
+  }
+  logWrap.style.display = 'block';
+  logBox.innerText = issuePlaywrightLogLines.join('\\n');
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+function renderIssueDraftEditor() {
+  const box = document.getElementById('issueDraftEditor');
+  const runtimeGrid = document.getElementById('issueDraftRuntimeGrid');
+  const jsonBox = document.getElementById('issueGeneratedJson');
+  if (!box) return;
+  if (!currentIssue) {
+    box.style.display = 'none';
+    if (runtimeGrid) runtimeGrid.style.display = 'none';
+    clearIssuePlaywrightLog(true);
+    if (jsonBox) {
+      jsonBox.style.display = 'none';
+      jsonBox.innerText = '{}';
+    }
+    return;
+  }
+  const title = document.getElementById('issueDraftTitle');
+  const description = document.getElementById('issueDraftDescription');
+  if (title) title.value = String(currentIssue.title || '');
+  if (description) description.value = String(currentIssue.description || '');
+  box.style.display = 'block';
+  if (runtimeGrid) runtimeGrid.style.display = 'grid';
+  if (jsonBox) {
+    jsonBox.style.display = 'block';
+    jsonBox.innerText = JSON.stringify(currentIssue || {}, null, 2);
+  }
+}
+
+function syncIssueDraftFromEditor() {
+  if (!currentIssue) return;
+  const title = document.getElementById('issueDraftTitle');
+  const description = document.getElementById('issueDraftDescription');
+  if (title) currentIssue.title = String(title.value || '').trim();
+  if (description) currentIssue.description = String(description.value || '').trim();
+}
+
+async function submitIssueDraft() {
+  if (!currentIssue) {
+    document.getElementById('issueSubmitStatus').innerText = 'Generate a draft first';
+    return;
+  }
+  syncIssueDraftFromEditor();
+  const draftTitle = String(currentIssue.title || '').trim();
+  const draftDescription = String(currentIssue.description || '').trim();
+  if (!draftTitle || !draftDescription) {
+    document.getElementById('issueSubmitStatus').innerText = 'Title and description are required before submit';
+    appendIssuePlaywrightLog('Validation failed: title/description cannot be empty.');
+    return;
+  }
+  appendIssuePlaywrightLog('Draft validated. Preparing Playwright execution.');
+  const btn = document.getElementById('issueSubmitBtn');
+  const oldText = btn.innerText;
+  btn.disabled = true;
+  btn.innerText = 'Submitting...';
+  document.getElementById('issueSubmitStatus').innerText = '';
+  try {
+    appendIssuePlaywrightLog('Sending draft to /issue-agent/submit...');
+    const r = await fetch(withIssueSecret('/submit'), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        issue: currentIssue,
+        selectors: {},
+        non_headless: true
+      })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    const finalUrl = String(((data || {}).result || {}).final_url || '').trim();
+    if (finalUrl) currentIssue.generated_link = finalUrl;
+    appendIssuePlaywrightLog('Playwright execution finished successfully.');
+    if (finalUrl) appendIssuePlaywrightLog(`Issue created/updated at: ${finalUrl}`);
+    document.getElementById('issueSubmitStatus').innerText = finalUrl
+      ? `Submitted: ${finalUrl}`
+      : 'Submitted via Playwright';
+    renderIssueDraftEditor();
+    setStatus('Issue submitted via Playwright');
+  } catch (err) {
+    appendIssuePlaywrightLog(`Playwright execution failed: ${err}`);
+    document.getElementById('issueSubmitStatus').innerText = `Error submitting draft: ${err}`;
+  } finally {
+    btn.disabled = false;
+    btn.innerText = oldText;
+  }
+}
+
 async function generateIssueDraft() {
   const input = document.getElementById('issueUserInput').value.trim();
   const selectedIssueType = document.getElementById('issueIssueType').value;
@@ -1219,8 +1370,11 @@ async function generateIssueDraft() {
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
     currentIssue = data.item || null;
-    document.getElementById('issueGeneratedJson').innerText = JSON.stringify(currentIssue || {}, null, 2);
     document.getElementById('issueGenerateStatus').innerText = `Draft generated: ${currentIssue && currentIssue.issue_id ? currentIssue.issue_id : 'unknown'}`;
+    document.getElementById('issueSubmitStatus').innerText = '';
+    clearIssuePlaywrightLog(false);
+    appendIssuePlaywrightLog('Draft generated and ready for review.');
+    renderIssueDraftEditor();
     if (includeComment) {
       document.getElementById('issueAddAsComment').checked = false;
       document.getElementById('issueCommentNumber').value = '';

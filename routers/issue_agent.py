@@ -139,6 +139,10 @@ def create_issue_router(
         ensure_config()
         repo = repo_aliases.get(str(req.issue.get("repo", "")).strip().lower(), "backend")
         issue_type = str(req.issue.get("issue_type", "")).strip().lower()
+        # Comment mode publishes against an existing issue and does not need UI selectors.
+        is_comment_mode = bool(req.issue.get("include_comment")) and bool(
+            str(req.issue.get("comment_issue_number", "")).strip()
+        )
         is_front_repo = repo == "frontend"
         is_backend_automated = repo == "backend" and issue_type in {
             "bug",
@@ -151,10 +155,31 @@ def create_issue_router(
         is_management_automated = repo == "management" and (
             bool(req.issue.get("as_new_feature")) or bool(req.issue.get("as_third_party"))
         )
-        if not (is_front_repo or is_backend_automated or is_management_automated):
+        if is_comment_mode:
+            logger.info(
+                "Issue submit: comment mode detected (repo=%s, issue_number=%s), selector validation bypassed",
+                repo,
+                str(req.issue.get("comment_issue_number", "")).strip(),
+            )
+        else:
+            logger.info(
+                "Issue submit: mode resolved (repo=%s, issue_type=%s, front_auto=%s, back_auto=%s, mgmt_auto=%s)",
+                repo,
+                issue_type or "-",
+                is_front_repo,
+                is_backend_automated,
+                is_management_automated,
+            )
+        if not (is_comment_mode or is_front_repo or is_backend_automated or is_management_automated):
             mandatory = ["title", "description"]
             for key in mandatory:
                 if key not in req.selectors or not str(req.selectors[key]).strip():
+                    logger.warning(
+                        "Issue submit rejected: missing selector '%s' (repo=%s, issue_type=%s)",
+                        key,
+                        repo,
+                        issue_type or "-",
+                    )
                     raise HTTPException(status_code=400, detail=f"Missing selector: {key}")
         required_issue_fields = ["issue_id", "title", "description", "generated_link"]
         for key in required_issue_fields:

@@ -14,6 +14,7 @@ except ModuleNotFoundError:  # pragma: no cover - depende del entorno local
 class _FakeIssueService:
     def __init__(self) -> None:
         self.last_generate_call = None
+        self.last_submit_call = None
 
     def generate_issue(
         self,
@@ -44,6 +45,11 @@ class _FakeIssueService:
         }
 
     def submit_issue_via_playwright(self, issue, selectors, non_headless):
+        self.last_submit_call = {
+            "issue": issue,
+            "selectors": selectors,
+            "non_headless": non_headless,
+        }
         return {"ok": True}
 
     def send_webhook_report(self, reason, details=None):
@@ -129,6 +135,71 @@ class IssueRouterMappingTests(unittest.TestCase):
         self.assertEqual(service.last_generate_call["repo"], "frontend")
         self.assertFalse(service.last_generate_call["as_new_feature"])
         self.assertFalse(service.last_generate_call["as_third_party"])
+
+    def test_generate_comment_mode_has_priority_over_new_feature_alias(self) -> None:
+        client, service = self._build_client()
+        response = client.post(
+            "/issue-agent/generate?secret=top-secret",
+            json={
+                "user_input": "comment text",
+                "issue_type": "new feature",
+                "repo": "backend",
+                "unit": "core",
+                "include_comment": True,
+                "comment_issue_number": "321",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(service.last_generate_call)
+        self.assertEqual(service.last_generate_call["issue_type"], "task")
+        self.assertEqual(service.last_generate_call["repo"], "backend")
+        self.assertFalse(service.last_generate_call["as_new_feature"])
+        self.assertFalse(service.last_generate_call["as_third_party"])
+
+    def test_submit_comment_mode_in_management_does_not_require_selectors(self) -> None:
+        client, service = self._build_client()
+        response = client.post(
+            "/issue-agent/submit?secret=top-secret",
+            json={
+                "issue": {
+                    "issue_id": "issue-1",
+                    "title": "comment title",
+                    "description": "comment desc",
+                    "generated_link": "https://example.test/management/issues/10",
+                    "repo": "management",
+                    "issue_type": "task",
+                    "include_comment": True,
+                    "comment_issue_number": "10",
+                },
+                "selectors": {},
+                "non_headless": True,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(service.last_submit_call)
+        self.assertEqual(service.last_submit_call["issue"]["repo"], "management")
+
+    def test_submit_management_plain_issue_requires_selectors(self) -> None:
+        client, _ = self._build_client()
+        response = client.post(
+            "/issue-agent/submit?secret=top-secret",
+            json={
+                "issue": {
+                    "issue_id": "issue-2",
+                    "title": "plain issue",
+                    "description": "plain desc",
+                    "generated_link": "https://example.test/management/issues/new",
+                    "repo": "management",
+                    "issue_type": "bug",
+                    "include_comment": False,
+                    "comment_issue_number": "",
+                },
+                "selectors": {},
+                "non_headless": True,
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Missing selector", response.json().get("detail", ""))
 
 
 if __name__ == "__main__":
