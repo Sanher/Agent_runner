@@ -113,4 +113,22 @@ def create_workday_router(
             logger.warning("Manual retry rejected: %s", err)
             raise HTTPException(status_code=400, detail=str(err)) from err
 
+    @router.post("/reset-session")
+    def reset_session(request: Request):
+        """Resets runtime session to before_start (only when no active run exists)."""
+        ensure_auth(request)
+        try:
+            logger.info("Manual session reset requested at %s", request.url.path)
+            result = service.reset_session()
+            logger.info(
+                "Manual session reset result reset=%s phase=%s previous_phase=%s",
+                bool(result.get("reset")),
+                result.get("phase", ""),
+                result.get("previous_phase", ""),
+            )
+            return result
+        except RuntimeError as err:
+            logger.warning("Manual session reset rejected: %s", err)
+            raise HTTPException(status_code=400, detail=str(err)) from err
+
     return router

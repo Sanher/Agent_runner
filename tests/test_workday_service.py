@@ -1,4 +1,5 @@
 import logging
+import json
 import sys
 import tempfile
 import types
@@ -132,6 +133,58 @@ class WorkdayServiceTests(unittest.TestCase):
         err = RuntimeError("BrowserType.launch: Executable doesn't exist at /ms-playwright/chromium")
         self.assertTrue(WorkdayAgentService._is_playwright_executable_error(err))
         self.assertFalse(WorkdayAgentService._is_playwright_executable_error(RuntimeError("other error")))
+
+    def test_reset_session_rejects_active_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            svc._set_runtime_state("working_before_break", "Working", run_id="r1", job="workday_flow", ok=None)
+            with self.assertRaises(RuntimeError):
+                svc.reset_session()
+
+    def test_reset_session_transitions_failed_to_before_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            svc._set_runtime_state(
+                "failed",
+                "Workday failed",
+                run_id="auto-1",
+                job="workday_flow",
+                ok=False,
+                failed_phase="working_before_break",
+            )
+
+            result = svc.reset_session()
+            self.assertTrue(result.get("ok"))
+            self.assertTrue(result.get("reset"))
+            self.assertEqual(result.get("phase"), "before_start")
+            self.assertEqual(result.get("previous_phase"), "failed")
+
+            state = svc._get_runtime_state()
+            self.assertEqual(state.get("phase"), "before_start")
+            self.assertEqual(state.get("run_id"), "")
+            self.assertTrue(bool(state.get("manual_reset")))
+
+            lines = [
+                json.loads(line)
+                for line in svc.runtime_events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(any(item.get("event") == "manual_session_reset" for item in lines))
+
+    def test_reset_session_noop_when_already_before_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            result = svc.reset_session()
+            self.assertTrue(result.get("ok"))
+            self.assertFalse(result.get("reset"))
+            self.assertEqual(result.get("phase"), "before_start")
+
+            lines = [
+                json.loads(line)
+                for line in svc.runtime_events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(any(item.get("event") == "manual_session_reset_noop" for item in lines))
 
 
 if __name__ == "__main__":

@@ -51,6 +51,7 @@ class WorkdayAgentService:
         self._settings = self._load_settings()
         self._runtime_state: Dict[str, Any] = self._load_runtime_state()
         self._debug("Service initialized", phase=self._runtime_state.get("phase", "before_start"))
+        self._maybe_reset_state_for_new_day()
         self._maybe_prune_runtime_events()
 
     @staticmethod
@@ -212,6 +213,59 @@ class WorkdayAgentService:
     def _get_runtime_state(self) -> Dict[str, Any]:
         with self._status_lock:
             return dict(self._runtime_state)
+
+    @staticmethod
+    def _state_reference_date(state: Dict[str, Any]) -> Optional[date]:
+        # Prefer concrete click timestamps when available.
+        ts_candidates = (
+            state.get("final_click_ts"),
+            state.get("stop_break_ts"),
+            state.get("start_break_ts"),
+            state.get("first_click_ts"),
+            state.get("planned_first_ts"),
+        )
+        for raw in ts_candidates:
+            ts = WorkdayAgentService._safe_float(raw, default=-1.0)
+            if ts > 0:
+                try:
+                    return datetime.fromtimestamp(ts).date()
+                except Exception:
+                    continue
+
+        updated = WorkdayAgentService._safe_parse_iso_datetime(state.get("updated_at", ""))
+        if updated is not None:
+            return updated.date()
+        return None
+
+    def _maybe_reset_state_for_new_day(self) -> None:
+        state = self._get_runtime_state()
+        phase = str(state.get("phase", "before_start"))
+        if phase in self.ACTIVE_PHASES or phase == "before_start":
+            return
+
+        ref_day = self._state_reference_date(state)
+        if ref_day is None:
+            return
+        today = date.today()
+        if ref_day >= today:
+            return
+
+        self.logger.info(
+            "Resetting stale runtime state for new day: previous_phase=%s previous_day=%s today=%s",
+            phase,
+            ref_day.isoformat(),
+            today.isoformat(),
+        )
+        self._set_runtime_state(
+            "before_start",
+            "Pending start",
+            run_id="",
+            job="workday_flow",
+            ok=None,
+            auto_reset=True,
+            previous_phase=phase,
+            previous_day=ref_day.isoformat(),
+        )
 
     @staticmethod
     def _runtime_resume_fields(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -520,6 +574,7 @@ class WorkdayAgentService:
 
     def retry_failed_action(self) -> Dict[str, Any]:
         # Retries the last failed state by restoring the active phase before the error.
+        self._maybe_reset_state_for_new_day()
         state = self._get_runtime_state()
         if str(state.get("phase", "")) != "failed":
             raise RuntimeError("There is no failed run to retry")
@@ -573,6 +628,57 @@ class WorkdayAgentService:
             retry_requested_at=datetime.now().isoformat(),
         )
         return self.resume_pending_flow()
+
+    def reset_session(self) -> Dict[str, Any]:
+        # Manual reset is only safe outside active phases. It is used by the UI "Reset session" button.
+        state = self._get_runtime_state()
+        phase = str(state.get("phase", "before_start"))
+        if phase in self.ACTIVE_PHASES:
+            raise RuntimeError("Cannot reset session while a run is active")
+
+        previous_run_id = str(state.get("run_id", "")).strip()
+        if phase == "before_start" and not previous_run_id:
+            self._append_runtime_event(
+                "manual_session_reset_noop",
+                phase="before_start",
+                run_id="",
+                job="workday_flow",
+                reason="already_before_start",
+            )
+            self.logger.info("Manual session reset requested but already before_start")
+            return {"ok": True, "reset": False, "phase": "before_start"}
+
+        self._set_runtime_state(
+            "before_start",
+            "Pending start",
+            run_id="",
+            job="workday_flow",
+            ok=None,
+            manual_reset=True,
+            previous_phase=phase,
+            previous_run_id=previous_run_id,
+            reset_requested_at=datetime.now().isoformat(),
+        )
+        self._append_runtime_event(
+            "manual_session_reset",
+            phase="before_start",
+            run_id="",
+            job="workday_flow",
+            previous_phase=phase,
+            previous_run_id=previous_run_id,
+        )
+        self.logger.info(
+            "Manual session reset executed previous_phase=%s previous_run_id=%s",
+            phase,
+            previous_run_id or "-",
+        )
+        return {
+            "ok": True,
+            "reset": True,
+            "phase": "before_start",
+            "previous_phase": phase,
+            "previous_run_id": previous_run_id,
+        }
 
     @staticmethod
     def _sleep_until(target_ts: float):
@@ -687,6 +793,7 @@ class WorkdayAgentService:
         return datetime.fromtimestamp(ts).strftime("%H:%M:%S")
 
     def get_status(self) -> Dict[str, Any]:
+        self._maybe_reset_state_for_new_day()
         state = self._get_runtime_state()
         now_ts = time.time()
         phase = str(state.get("phase", "before_start"))

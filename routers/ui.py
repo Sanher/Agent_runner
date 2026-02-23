@@ -465,6 +465,7 @@ def create_ui_router(job_secret: str) -> APIRouter:
       <div id=\"workdayStatusLine\" class=\"kv\">Loading status...</div>
       <div id=\"workdayTimingLine\" class=\"kv muted\"></div>
       <div id=\"workdayExpected\" class=\"kv muted\"></div>
+      <button onclick=\"resetWorkdaySession()\" id=\"resetWorkdaySessionBtn\">Reset session</button>
       <div id=\"workdayRetryWrap\" style=\"display:none;\">
         <button onclick=\"retryFailedAction()\" id=\"retryFailedBtn\">Retry failed action now</button>
       </div>
@@ -974,6 +975,34 @@ async function retryFailedAction() {
     await refreshWorkdayPanel();
   } catch (err) {
     setStatus(`Retry failed: ${err}`);
+  } finally {
+    btn.disabled = false;
+    btn.innerText = oldText;
+  }
+}
+
+async function resetWorkdaySession() {
+  const btn = document.getElementById('resetWorkdaySessionBtn');
+  const oldText = btn.innerText;
+  btn.disabled = true;
+  btn.innerText = 'Resetting...';
+  setStatus('Resetting workday session...');
+  console.info('[workday-ui] reset session requested');
+  try {
+    const r = await fetch(withWorkdaySecret('/reset-session'), { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    if (data && data.reset) {
+      console.info('[workday-ui] reset session completed', data);
+      setStatus('Workday session reset to before start');
+    } else {
+      console.info('[workday-ui] reset session noop (already before start)', data);
+      setStatus('Session already at before start');
+    }
+    await refreshWorkdayPanel();
+  } catch (err) {
+    console.error('[workday-ui] reset session failed', err);
+    setStatus(`Reset session failed: ${err}`);
   } finally {
     btn.disabled = false;
     btn.innerText = oldText;
