@@ -256,6 +256,30 @@ def create_ui_router(job_secret: str) -> APIRouter:
     }
 
     .muted { color: var(--muted); font-size: 0.9em; }
+
+    #status {
+      margin: 10px 0 6px;
+      min-height: 1.4em;
+      font-weight: 600;
+      color: var(--text);
+      opacity: 1;
+      transition: opacity 0.2s ease, color 0.2s ease;
+    }
+
+    #status.status-error {
+      color: #f87171;
+    }
+
+    #status.status-success {
+      color: #86efac;
+      text-shadow:
+        0 0 8px rgba(34, 197, 94, 0.45),
+        0 0 1px rgba(240, 253, 244, 0.9);
+    }
+
+    #status.status-hidden {
+      opacity: 0;
+    }
     .modal-backdrop {
       position: fixed;
       inset: 0;
@@ -449,7 +473,7 @@ def create_ui_router(job_secret: str) -> APIRouter:
     <aside class="sidebar">
       <h1 class="brand-title">Agent Runner</h1>
       <p class="muted">Monitor and manage web, email, issue and answers agents in a single interface.</p>
-      <p id="status"></p>
+      <p id="status" role="status" aria-live="polite"></p>
       <div class="tabs">
         <button id="tabWorkdayBtn" class="tab-btn active" onclick="showTab('workday')">Web Interaction Agent</button>
         <button id="tabEmailBtn" class="tab-btn" onclick="showTab('email')">Email Agent</button>
@@ -647,6 +671,7 @@ let workdayTickerAlignTimer = null;
 let workdayTickerSnapshot = null;
 let answersArchivedVisible = false;
 let emailReviewedVisible = false;
+let statusDismissTimer = null;
 let emailSettingsCache = {
   default_from_email: '',
   default_cc_email: ''
@@ -681,7 +706,39 @@ function withAnswersSecret(path) {
 }
 
 function setStatus(text) {
-  statusEl.innerText = text;
+  if (!statusEl) return;
+  const message = String(text || '').trim();
+
+  if (statusDismissTimer) {
+    clearTimeout(statusDismissTimer);
+    statusDismissTimer = null;
+  }
+
+  statusEl.classList.remove('status-hidden');
+  statusEl.classList.remove('status-error');
+  statusEl.classList.remove('status-success');
+
+  if (!message) {
+    statusEl.innerText = '';
+    return;
+  }
+
+  const isError = /(error|failed|invalid|unauthorized|forbidden|denied|unable|reject|timeout|exception)/i.test(message);
+  const isSuccess = !isError && /(saved|sent|created|updated|marked|unarchived|archived|executed|generated|received|moved|removed|completed|reset|succeeded|success)/i.test(message);
+  if (isError) {
+    statusEl.classList.add('status-error');
+  } else if (isSuccess) {
+    statusEl.classList.add('status-success');
+  }
+
+  statusEl.innerText = message;
+  statusDismissTimer = setTimeout(() => {
+    statusEl.classList.add('status-hidden');
+    statusEl.innerText = '';
+    statusEl.classList.remove('status-error');
+    statusEl.classList.remove('status-success');
+    statusDismissTimer = null;
+  }, 20000);
 }
 
 function phaseLabel(phase) {
@@ -1584,6 +1641,23 @@ async function markAnswersReviewed(chatId) {
   }
 }
 
+async function markAnswersSpam(chatId) {
+  try {
+    const r = await fetch(withAnswersSecret(`/chats/${encodeURIComponent(chatId)}/status`), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({status: 'spam'})
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    setStatus(`Chat ${chatId} marked as spam and archived`);
+    await loadAnswersChats();
+    if (answersArchivedVisible) await loadArchivedAnswersChats();
+  } catch (err) {
+    setStatus(`Error marking chat as spam: ${err}`);
+  }
+}
+
 function toggleArchivedAnswers() {
   answersArchivedVisible = !answersArchivedVisible;
   const btn = document.getElementById('answersArchivedToggleBtn');
@@ -1719,6 +1793,7 @@ async function loadAnswersChats() {
         <button onclick="openAnswersSuggestModal('${escapeHtml(chatId)}')">Suggest changes</button>
         <button onclick="sendAnswersReply('${escapeHtml(chatId)}')">Send reply</button>
         <button onclick="markAnswersReviewed('${escapeHtml(chatId)}')">Mark reviewed</button>
+        <button onclick="markAnswersSpam('${escapeHtml(chatId)}')">Mark spam</button>
       </div>
     `;
     list.appendChild(card);
