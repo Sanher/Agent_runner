@@ -532,19 +532,30 @@ class WorkdayAgentService:
         first_click_ts = state.get("first_click_ts")
         start_break_ts = state.get("start_break_ts")
         stop_break_ts = state.get("stop_break_ts")
+        inferred_fields: list[str] = []
 
         if self._safe_float(first_click_ts) <= 0:
             inferred = self._infer_click_ts_from_events(run_id=run_id, click_name="start_click")
             if inferred > 0:
                 first_click_ts = inferred
+                inferred_fields.append("first_click_ts")
         if self._safe_float(start_break_ts) <= 0:
             inferred = self._infer_click_ts_from_events(run_id=run_id, click_name="start_break_click")
             if inferred > 0:
                 start_break_ts = inferred
+                inferred_fields.append("start_break_ts")
         if self._safe_float(stop_break_ts) <= 0:
             inferred = self._infer_click_ts_from_events(run_id=run_id, click_name="stop_break_click")
             if inferred > 0:
                 stop_break_ts = inferred
+                inferred_fields.append("stop_break_ts")
+
+        if inferred_fields:
+            self.logger.info(
+                "Retry inferred missing timestamps from events run_id=%s fields=%s",
+                run_id or "-",
+                ",".join(inferred_fields),
+            )
 
         self._set_runtime_state(
             failed_phase,
@@ -701,6 +712,11 @@ class WorkdayAgentService:
 
         if phase == "on_break":
             planned = float(state.get("planned_stop_break_ts", 0))
+            if planned <= 0:
+                # Break is confirmed, but remaining time cannot be inferred reliably.
+                state["message"] = "On break (remaining time unknown)"
+                state.pop("remaining_seconds", None)
+                return state
             remaining = max(0, int(planned - now_ts))
             state["message"] = f"On break, {self._fmt_duration(remaining)} remaining"
             state["remaining_seconds"] = remaining
@@ -708,6 +724,10 @@ class WorkdayAgentService:
 
         if phase == "working_after_break":
             planned = float(state.get("planned_final_ts", 0))
+            if planned <= 0:
+                state["message"] = "After break (remaining time unknown)"
+                state.pop("remaining_seconds", None)
+                return state
             remaining = max(0, int(planned - now_ts))
             state["message"] = f"After break, {self._fmt_duration(remaining)} remaining"
             state["remaining_seconds"] = remaining
@@ -786,6 +806,8 @@ class WorkdayAgentService:
         best = None
         best_area = -1.0
 
+        # Some views expose duplicate icon buttons; pick the largest visible
+        # candidate to target the primary control.
         for idx in range(count):
             loc = group.nth(idx)
             try:
@@ -802,6 +824,26 @@ class WorkdayAgentService:
                 continue
 
         return best if best is not None else group.first
+
+    def _is_selector_visible(self, page, selector: str, timeout_ms: int = 0) -> bool:
+        if timeout_ms > 0:
+            try:
+                page.wait_for_selector(selector, timeout=timeout_ms)
+            except Exception:
+                pass
+        group = page.locator(selector)
+        count = group.count()
+        for idx in range(count):
+            try:
+                if group.nth(idx).is_visible():
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _is_icon_visible(self, page, icon_label: str, timeout_ms: int = 0) -> bool:
+        selector = f"button:has(svg[aria-label='{icon_label}'])"
+        return self._is_selector_visible(page, selector, timeout_ms=timeout_ms)
 
     def _humanized_click(self, page, selector: str, timeout_ms: int = 15_000, context_label: str = "click") -> None:
         try:
@@ -865,14 +907,36 @@ class WorkdayAgentService:
         action_label: str,
         timeout_ms: int = 15_000,
     ) -> None:
+        click_selector = f"button:has(svg[aria-label='{click_icon_label}'])"
         self._click_icon_button(page, click_icon_label, timeout_ms=timeout_ms)
         expected_selector = f"button:has(svg[aria-label='{expected_icon_label}'])"
+        if self._is_selector_visible(page, expected_selector, timeout_ms=timeout_ms):
+            return
+
+        self.logger.warning(
+            "Transition not confirmed for %s on first attempt; reloading and retrying",
+            action_label,
+        )
         try:
-            page.wait_for_selector(expected_selector, timeout=timeout_ms)
-        except Exception as exc:
-            raise RuntimeError(
-                f"Could not confirm {action_label}: {expected_icon_label} did not appear after clicking {click_icon_label}"
-            ) from exc
+            page.reload(wait_until="domcontentloaded", timeout=60_000)
+            self._dismiss_cookie_popup(page)
+            self._dismiss_location_prompt(page)
+        except Exception:
+            self.logger.exception("Failed to reload page during transition retry (%s)", action_label)
+
+        if self._is_selector_visible(page, expected_selector, timeout_ms=4_000):
+            self.logger.info("Transition confirmed after reload for %s", action_label)
+            return
+
+        if self._is_selector_visible(page, click_selector, timeout_ms=4_000):
+            self._click_icon_button(page, click_icon_label, timeout_ms=timeout_ms)
+            if self._is_selector_visible(page, expected_selector, timeout_ms=timeout_ms):
+                self.logger.info("Transition confirmed on second click for %s", action_label)
+                return
+
+        raise RuntimeError(
+            f"Could not confirm {action_label}: {expected_icon_label} did not appear after clicking {click_icon_label}"
+        )
 
 
     def _confirm_end_of_day_modal(self, page, timeout_ms: int = 15_000) -> None:
@@ -1049,40 +1113,105 @@ class WorkdayAgentService:
                     second_click_ts = plans["planned_start_break_ts"]
                     self._sleep_until(second_click_ts)
                     open_target()
-                    self._click_and_confirm_transition(page, "Icon-pause", "Icon-play", "break start")
-                    start_break_at = datetime.now().isoformat()
-                    self.send_status(
-                        job_name,
-                        run_id,
-                        "start_break_click",
-                        "Resume: clicked break start",
-                    )
-                    self.send_click_webhook(
-                        self.webhook_start_break_url,
-                        job_name=job_name,
-                        run_id=run_id,
-                        click_name="start_break_click",
-                        ok=True,
-                        meta={
-                            "scheduled_at": datetime.fromtimestamp(second_click_ts).isoformat(),
-                            "executed_at": start_break_at,
-                            "recovered": True,
-                        },
-                    )
-                    snap("recovered_start_break_click")
-                    start_break_ts = datetime.fromisoformat(start_break_at).timestamp()
-                    self._set_runtime_state(
-                        "on_break",
-                        "On break (resumed)",
-                        run_id=run_id,
-                        job=job_name,
-                        ok=None,
-                        first_click_ts=first_click_ts,
-                        start_break_ts=start_break_ts,
-                        planned_stop_break_ts=plans["planned_stop_break_ts"],
-                        planned_final_ts=plans["planned_final_ts"],
-                    )
-                    phase = "on_break"
+                    if self._is_icon_visible(page, "Icon-play", timeout_ms=2_000):
+                        inferred_start_break_ts = self._infer_click_ts_from_events(
+                            run_id=run_id,
+                            click_name="start_break_click",
+                        )
+                        if inferred_start_break_ts <= 0:
+                            self._set_runtime_state(
+                                "on_break",
+                                "On break detected from UI (manual state, unknown remaining time)",
+                                run_id=run_id,
+                                job=job_name,
+                                ok=None,
+                                first_click_ts=first_click_ts,
+                                planned_start_break_ts=plans["planned_start_break_ts"],
+                                planned_stop_break_ts=0.0,
+                                planned_final_ts=plans["planned_final_ts"],
+                                manual_state_detected=True,
+                            )
+                            self._append_runtime_event(
+                                "manual_state_detected",
+                                phase="on_break",
+                                run_id=run_id,
+                                job=job_name,
+                                reason="break_start_detected_without_timestamp",
+                            )
+                            self.logger.info(
+                                "Manual break detected without timing reference run_id=%s",
+                                run_id,
+                            )
+                            snap("recovered_manual_on_break")
+                            return {
+                                "ok": True,
+                                "resumed": False,
+                                "phase": "on_break",
+                                "run_id": run_id,
+                                "reason": "manual_break_unknown_timing",
+                            }
+                        start_break_ts = inferred_start_break_ts
+                        self._set_runtime_state(
+                            "on_break",
+                            "On break detected from UI (manual state)",
+                            run_id=run_id,
+                            job=job_name,
+                            ok=None,
+                            first_click_ts=first_click_ts,
+                            start_break_ts=start_break_ts,
+                            planned_start_break_ts=plans["planned_start_break_ts"],
+                            planned_stop_break_ts=plans["planned_stop_break_ts"],
+                            planned_final_ts=plans["planned_final_ts"],
+                            manual_state_detected=True,
+                        )
+                        phase = "on_break"
+                        self._append_runtime_event(
+                            "manual_state_detected",
+                            phase=phase,
+                            run_id=run_id,
+                            job=job_name,
+                            reason="break_start_detected",
+                        )
+                        self.logger.info(
+                            "Manual break detected and reconciled run_id=%s",
+                            run_id,
+                        )
+                        snap("recovered_manual_on_break")
+                    if phase == "working_before_break":
+                        self._click_and_confirm_transition(page, "Icon-pause", "Icon-play", "break start")
+                        start_break_at = datetime.now().isoformat()
+                        self.send_status(
+                            job_name,
+                            run_id,
+                            "start_break_click",
+                            "Resume: clicked break start",
+                        )
+                        self.send_click_webhook(
+                            self.webhook_start_break_url,
+                            job_name=job_name,
+                            run_id=run_id,
+                            click_name="start_break_click",
+                            ok=True,
+                            meta={
+                                "scheduled_at": datetime.fromtimestamp(second_click_ts).isoformat(),
+                                "executed_at": start_break_at,
+                                "recovered": True,
+                            },
+                        )
+                        snap("recovered_start_break_click")
+                        start_break_ts = datetime.fromisoformat(start_break_at).timestamp()
+                        self._set_runtime_state(
+                            "on_break",
+                            "On break (resumed)",
+                            run_id=run_id,
+                            job=job_name,
+                            ok=None,
+                            first_click_ts=first_click_ts,
+                            start_break_ts=start_break_ts,
+                            planned_stop_break_ts=plans["planned_stop_break_ts"],
+                            planned_final_ts=plans["planned_final_ts"],
+                        )
+                        phase = "on_break"
 
                 if phase == "on_break":
                     if first_click_ts <= 0 or start_break_ts <= 0:
