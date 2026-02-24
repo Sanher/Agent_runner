@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 import threading
 import time
 from datetime import datetime
@@ -39,6 +40,7 @@ ISSUE_TEMPLATE_BY_REPO_AND_TYPE = {
 }
 DEFAULT_BUG_PARENT_REPO_BY_REPO = {repo: "" for repo in REPO_KEYS}
 DEFAULT_BUG_PARENT_ISSUE_NUMBER_BY_REPO = {repo: "" for repo in REPO_KEYS}
+WEEKLY_RETENTION_SECONDS = 7 * 24 * 60 * 60
 NEW_FEATURE_TEMPLATE = """FASE 1 - SOLICITUD DE NUEVA FEATURE
 ¿En que consiste?
 {info}
@@ -129,6 +131,7 @@ class IssueAgentService:
         self.memory_path = self.data_dir / "issue_agent_memory.jsonl"
         self.events_path = self.data_dir / "issue_agent_events.jsonl"
         self.status_path = self.data_dir / "issue_agent_status.json"
+        self.cleanup_state_path = self.data_dir / "issue_agent_cleanup_state.json"
         self._run_lock = threading.Lock()
 
         self._persist_status(
@@ -147,6 +150,7 @@ class IssueAgentService:
             has_webhook=bool(self.webhook_url.strip()),
             bug_parent_mapping_configured=any(bool(value) for value in self.bug_parent_repo_by_repo.values()),
         )
+        self._maybe_weekly_cleanup()
 
     @staticmethod
     def now_id() -> str:
@@ -197,6 +201,105 @@ class IssueAgentService:
         self.events_path.parent.mkdir(parents=True, exist_ok=True)
         with self.events_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+    # Weekly cleanup state is tracked in a small sidecar file to avoid running cleanup
+    # on every request. This keeps runtime overhead low in HA while still enforcing retention.
+    def _load_cleanup_state(self) -> Dict[str, Any]:
+        if not self.cleanup_state_path.exists():
+            return {}
+        try:
+            return json.loads(self.cleanup_state_path.read_text(encoding="utf-8"))
+        except Exception:
+            self.logger.warning("Issue flow: failed to read cleanup state, recreating it")
+            return {}
+
+    def _save_cleanup_state(self, data: Dict[str, Any]) -> None:
+        self.cleanup_state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.cleanup_state_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def _parse_iso_ts(raw: str) -> Optional[datetime]:
+        text = str(raw or "").strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    def _purge_old_issue_runs(self, cutoff_ts: float) -> int:
+        # Removes old Playwright artifacts only (screenshots/html).
+        # It does not touch memory, storage_state, or status files.
+        runs_root = self.data_dir / "runs" / "issue_flow"
+        if not runs_root.exists():
+            return 0
+        removed = 0
+        for entry in runs_root.iterdir():
+            if not entry.is_dir():
+                continue
+            try:
+                if entry.stat().st_mtime < cutoff_ts:
+                    shutil.rmtree(entry)
+                    removed += 1
+            except Exception as err:
+                self.logger.warning("Issue flow: failed to remove old artifacts dir %s: %s", entry, err)
+        return removed
+
+    def _prune_old_events(self, cutoff_ts: float) -> int:
+        # Prunes old telemetry rows from issue_agent_events.jsonl.
+        if not self.events_path.exists():
+            return 0
+        lines = self.events_path.read_text(encoding="utf-8").splitlines()
+        kept: List[str] = []
+        removed = 0
+        for line in lines:
+            try:
+                payload = json.loads(line)
+            except Exception:
+                kept.append(line)
+                continue
+            ts = self._parse_iso_ts(str(payload.get("ts", "")))
+            if ts is None:
+                kept.append(line)
+                continue
+            if ts.timestamp() < cutoff_ts:
+                removed += 1
+                continue
+            kept.append(line)
+        if removed > 0:
+            body = "\n".join(kept)
+            if body:
+                body += "\n"
+            self.events_path.write_text(body, encoding="utf-8")
+        return removed
+
+    def _maybe_weekly_cleanup(self) -> None:
+        # Weekly retention guard:
+        # - delete issue_flow run dirs older than 7 days
+        # - delete telemetry events older than 7 days
+        # - keep memory/status/storage_state untouched
+        now = datetime.now()
+        now_ts = time.time()
+        state = self._load_cleanup_state()
+        last_cleanup = self._parse_iso_ts(str(state.get("last_weekly_cleanup", "")))
+        if last_cleanup is not None:
+            try:
+                if (now_ts - last_cleanup.timestamp()) < WEEKLY_RETENTION_SECONDS:
+                    return
+            except Exception:
+                pass
+
+        cutoff_ts = now_ts - WEEKLY_RETENTION_SECONDS
+        removed_runs = self._purge_old_issue_runs(cutoff_ts=cutoff_ts)
+        removed_events = self._prune_old_events(cutoff_ts=cutoff_ts)
+        self._save_cleanup_state({"last_weekly_cleanup": now.isoformat()})
+        cleanup_at = now.strftime("%Y-%m-%d %H:%M:%S")
+        self.logger.info(
+            "Issue flow: weekly cleanup completed at %s (removed_runs=%s, removed_events=%s, retention_days=7)",
+            cleanup_at,
+            removed_runs,
+            removed_events,
+        )
 
     def _persist_status(self, data: Dict[str, Any]) -> None:
         self.status_path.parent.mkdir(parents=True, exist_ok=True)
@@ -593,6 +696,7 @@ class IssueAgentService:
         as_new_feature: bool = False,
         as_third_party: bool = False,
     ) -> Dict[str, Any]:
+        self._maybe_weekly_cleanup()
         issue_type = self._normalize_issue_type(issue_type)
         repo = self._normalize_repo(repo)
         unit = self._normalize_unit(unit)
@@ -745,6 +849,7 @@ class IssueAgentService:
         selectors: Dict[str, str],
         non_headless: bool,
     ) -> Dict[str, Any]:
+        self._maybe_weekly_cleanup()
         if not self._run_lock.acquire(blocking=False):
             raise RuntimeError("Issue flow already running")
 
