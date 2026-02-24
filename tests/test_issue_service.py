@@ -100,10 +100,16 @@ class _FailingPage:
 
 @unittest.skipUnless(DEPS_AVAILABLE, "issue agent dependencies are not installed in this environment")
 class IssueServiceTests(unittest.TestCase):
-    def _build_service(self, data_dir: Path) -> IssueAgentService:
+    def _build_service(
+        self,
+        data_dir: Path,
+        *,
+        bug_parent_repo_by_repo: dict | None = None,
+        bug_parent_issue_number_by_repo: dict | None = None,
+    ) -> IssueAgentService:
         return IssueAgentService(
             data_dir=data_dir,
-            repo_base_url="https://github.com/dextools-io",
+            repo_base_url="https://example.test/test-org",
             project_name="Dextools",
             storage_state_path=str(data_dir / "storage" / "issue_agent.json"),
             openai_api_key="x",
@@ -111,8 +117,8 @@ class IssueServiceTests(unittest.TestCase):
             openai_style_law="",
             webhook_url="",
             logger=logging.getLogger("tests.issue"),
-            bug_parent_repo_by_repo={},
-            bug_parent_issue_number_by_repo={},
+            bug_parent_repo_by_repo=bug_parent_repo_by_repo or {},
+            bug_parent_issue_number_by_repo=bug_parent_issue_number_by_repo or {},
         )
 
     def test_apply_bug_parent_relationship_returns_warning_when_config_missing(self) -> None:
@@ -136,6 +142,26 @@ class IssueServiceTests(unittest.TestCase):
             self.assertGreaterEqual(len(warnings), 3)
             self.assertTrue(any("status selection failed" in item for item in warnings))
             self.assertTrue(any("business unit failed" in item for item in warnings))
+
+    def test_apply_bug_parent_relationship_uses_management_repo_for_configured_parent_issue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(
+                Path(tmp),
+                bug_parent_repo_by_repo={
+                    "frontend": "example-org/frontend",
+                    "backend": "example-org/backend",
+                    "management": "example-org/management",
+                },
+                bug_parent_issue_number_by_repo={
+                    "frontend": "56",
+                    "backend": "53",
+                    "management": "54",
+                },
+            )
+            warning = svc._apply_bug_parent_relationship(page=_FailingPage(), repo="frontend")
+            self.assertIsInstance(warning, str)
+            self.assertIn("parent_repo=example-org/management", warning)
+            self.assertIn("parent_issue=56", warning)
 
 
 if __name__ == "__main__":

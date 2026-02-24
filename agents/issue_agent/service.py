@@ -264,6 +264,21 @@ class IssueAgentService:
     def _repo_slug(repo: str) -> str:
         return REPO_SLUGS.get(REPO_ALIASES.get(str(repo or "").strip().lower(), ""), "")
 
+    def _repo_owner(self) -> str:
+        base = str(self.repo_base_url or "").strip()
+        if base:
+            try:
+                path = urlsplit(base).path.strip("/")
+                if path:
+                    return path.split("/")[0].strip()
+            except Exception:
+                pass
+        for configured in self.bug_parent_repo_by_repo.values():
+            value = str(configured or "").strip()
+            if "/" in value:
+                return value.split("/", 1)[0].strip()
+        return ""
+
     def _repo_issues_base_url(self, repo: str) -> str:
         base = str(self.repo_base_url or "").strip().rstrip("/")
         slug = self._repo_slug(repo)
@@ -967,12 +982,12 @@ class IssueAgentService:
         key = REPO_ALIASES.get(str(repo or "").strip().lower(), "frontend")
         return mapping.get(key, "Frontend")
 
-    def _click_option_by_text(self, page, text: str) -> None:
+    def _click_option_by_text(self, page, text: str, always_click: bool = False, timeout_ms: int = 6000) -> None:
         option = page.locator("li[role='option']").filter(has_text=text).first
-        option.wait_for(state="visible", timeout=6000)
+        option.wait_for(state="visible", timeout=timeout_ms)
         selected = option.get_attribute("aria-selected")
-        if selected != "true":
-            option.click()
+        if always_click or selected != "true":
+            option.click(timeout=timeout_ms)
 
     @staticmethod
     def _append_issue_warning(issue: Dict[str, Any], message: str) -> None:
@@ -1051,6 +1066,15 @@ class IssueAgentService:
         parent_issue_number = str(parent_issue_number_override or "").strip() or self.bug_parent_issue_number_by_repo.get(
             repo_key, ""
         )
+        configured_parent_issues = {
+            str(value).strip()
+            for value in self.bug_parent_issue_number_by_repo.values()
+            if str(value).strip()
+        }
+        if parent_issue_number in configured_parent_issues:
+            management_parent_repo = str(self.bug_parent_repo_by_repo.get("management", "")).strip()
+            if management_parent_repo:
+                parent_repo = management_parent_repo
         if not parent_repo or not parent_issue_number:
             self.logger.warning("Issue flow: parent relationship skipped (missing target for repo=%s)", repo_key)
             return f"Parent relationship skipped: missing target for repo '{repo_key}'"
@@ -1072,9 +1096,26 @@ class IssueAgentService:
             add_parent_item.wait_for(state="visible", timeout=7000)
             add_parent_item.click(timeout=7000)
             page.locator('[data-testid="back-to-repo-selection-button"]').first.click(timeout=7000)
-            self._click_option_by_text(page, parent_repo)
-            page.wait_for_timeout(2000)
-            issue_search = page.locator('input[aria-label="Search issues"]').first
+
+            repo_search = page.locator(
+                'input[aria-label*="repository" i], input[placeholder*="repository" i], input[aria-label*="Select repository" i]'
+            ).first
+            if repo_search.count() > 0:
+                repo_search.fill(parent_repo, timeout=7000)
+                page.wait_for_timeout(700)
+
+            try:
+                self._click_option_by_text(page, parent_repo, always_click=True, timeout_ms=7000)
+            except Exception:
+                parent_repo_short = parent_repo.split("/")[-1].strip()
+                if parent_repo_short:
+                    self._click_option_by_text(page, parent_repo_short, always_click=True, timeout_ms=7000)
+                else:
+                    raise
+
+            page.wait_for_timeout(2500)
+            issue_search = page.locator('input[aria-label="Search issues"], input[placeholder*="Search issues"]').first
+            issue_search.wait_for(state="visible", timeout=12000)
             issue_search.fill(parent_issue_number, timeout=7000)
             page.wait_for_timeout(5000)
             parent_issue = page.locator("li[role='option']").filter(has_text=f"#{parent_issue_number}").first
@@ -1095,40 +1136,64 @@ class IssueAgentService:
                 f"parent_issue={parent_issue_number}): {err}"
             )
 
-    def _ensure_project_post_fields_visible(self, page) -> None:
+    def _ensure_project_post_fields_visible(self, page) -> bool:
         # GitHub project metadata can be collapsed right after create.
         # Open the chevron container before trying Status/Unit/Team/Sprint/Date.
-        for _ in range(3):
-            if page.locator("button").filter(has_text="Business Unit").count() > 0:
-                return
-            collapsed = page.locator("button[data-component='IconButton'][aria-expanded='false']")
-            if collapsed.count() == 0:
-                return
+        business_unit_btn = page.locator("button").filter(has_text="Business Unit")
+        if business_unit_btn.count() > 0:
+            return True
+
+        candidate_groups = []
+        project_name = str(self.project_name or "").strip()
+        if project_name:
+            project_pattern = re.compile(rf"\b{re.escape(project_name)}\b", re.I)
+            candidate_groups.append(
+                page.locator("div,section,aside")
+                .filter(has_text=project_pattern)
+                .locator("button[data-component='IconButton'][aria-expanded='false']")
+            )
+        candidate_groups.append(page.locator("button[data-component='IconButton'][aria-expanded='false']"))
+
+        for group in candidate_groups:
             try:
-                collapsed.first.click(timeout=4000)
+                total = min(group.count(), 8)
             except Exception:
+                total = 0
+            for idx in range(total):
+                button = group.nth(idx)
                 try:
-                    collapsed.first.click(timeout=4000, force=True)
+                    button.scroll_into_view_if_needed(timeout=2000)
                 except Exception:
-                    return
-            page.wait_for_timeout(450)
+                    pass
+                try:
+                    button.click(timeout=3000)
+                except Exception:
+                    try:
+                        button.click(timeout=3000, force=True)
+                    except Exception:
+                        continue
+                page.wait_for_timeout(350)
+                if business_unit_btn.count() > 0:
+                    return True
+        return business_unit_btn.count() > 0
 
     def _apply_post_creation_fields(
         self, page, unit_label: str, team_label: str = "", status_label: str = "Todo"
     ) -> List[str]:
         # Shared post-create metadata flow used across frontend/backend/management issue variants.
         self._debug("Applying post-create fields", status=status_label, unit=unit_label, team=team_label or "-")
-        self._ensure_project_post_fields_visible(page)
         warnings: List[str] = []
+        if not self._ensure_project_post_fields_visible(page):
+            message = "Post-create project fields are still collapsed (Business Unit not visible)"
+            warnings.append(message)
+            self.logger.warning("Issue flow: %s", message)
+
         status_error: Optional[Exception] = None
         for attempt in range(3):
             try:
                 if attempt == 0:
-                    chevron = page.locator('button[data-component="IconButton"]').first
-                    chevron.click(timeout=4000)
-                    page.wait_for_timeout(1200)
-                    chevron.click(timeout=4000)
-                    page.wait_for_timeout(700)
+                    self._ensure_project_post_fields_visible(page)
+                    page.wait_for_timeout(500)
                 elif attempt == 1:
                     page.locator("button").filter(has_text=re.compile(r"Status|Todo|Backlog", re.I)).first.click(
                         timeout=4000
@@ -1137,7 +1202,7 @@ class IssueAgentService:
                 else:
                     page.keyboard.press("Escape")
                     page.wait_for_timeout(250)
-                    page.locator('button[data-component="IconButton"]').first.click(timeout=4000)
+                    self._ensure_project_post_fields_visible(page)
                     page.wait_for_timeout(500)
 
                 try:
