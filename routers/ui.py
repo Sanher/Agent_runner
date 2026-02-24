@@ -1294,11 +1294,18 @@ async function submitIssueDraft() {
     const finalUrl = String(result.final_url || '').trim();
     const runId = String(result.run_id || '').trim();
     const artifactsDir = String(result.artifacts_dir || '').trim();
+    const summary = String(result.summary || '').trim();
+    const warnings = Array.isArray(result.warnings) ? result.warnings : [];
     if (finalUrl) currentIssue.generated_link = finalUrl;
     appendIssuePlaywrightLog('Playwright execution finished successfully.');
+    if (summary) appendIssuePlaywrightLog(summary);
     if (finalUrl) appendIssuePlaywrightLog(`Issue created/updated at: ${finalUrl}`);
     if (runId) appendIssuePlaywrightLog(`Run ID: ${runId}`);
     if (artifactsDir) appendIssuePlaywrightLog(`Artifacts path: ${artifactsDir}`);
+    if (warnings.length) {
+      appendIssuePlaywrightLog(`Completed with ${warnings.length} non-blocking warning(s):`);
+      warnings.forEach((w) => appendIssuePlaywrightLog(`- ${String(w)}`));
+    }
     document.getElementById('issueSubmitStatus').innerText = finalUrl
       ? `Submitted: ${finalUrl}`
       : 'Submitted via Playwright';
