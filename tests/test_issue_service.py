@@ -1,8 +1,11 @@
 import logging
+import json
 import sys
 import tempfile
+import time
 import types
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
@@ -276,6 +279,81 @@ class IssueServiceTests(unittest.TestCase):
             svc._open_project_field_button(page, "Business Unit", timeout_ms=50)
             self.assertEqual(3, page.field_locator.attempts)
             self.assertGreaterEqual(page.keyboard.pressed.count("Escape"), 2)
+
+    def test_weekly_cleanup_removes_old_runs_and_old_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            svc = self._build_service(base)
+
+            runs_root = base / "runs" / "issue_flow"
+            old_run = runs_root / "old-run"
+            new_run = runs_root / "new-run"
+            old_run.mkdir(parents=True, exist_ok=True)
+            new_run.mkdir(parents=True, exist_ok=True)
+
+            now_ts = time.time()
+            old_ts = now_ts - (8 * 24 * 60 * 60)
+            new_ts = now_ts - 60
+            old_file = old_run / "old.png"
+            new_file = new_run / "new.png"
+            old_file.write_text("x", encoding="utf-8")
+            new_file.write_text("y", encoding="utf-8")
+            os_old = (old_ts, old_ts)
+            os_new = (new_ts, new_ts)
+            import os
+            os.utime(old_run, os_old)
+            os.utime(old_file, os_old)
+            os.utime(new_run, os_new)
+            os.utime(new_file, os_new)
+
+            old_event_ts = (datetime.now() - timedelta(days=8)).isoformat()
+            new_event_ts = (datetime.now() - timedelta(hours=1)).isoformat()
+            svc.events_path.parent.mkdir(parents=True, exist_ok=True)
+            svc.events_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"ts": old_event_ts, "event": "old"}),
+                        json.dumps({"ts": new_event_ts, "event": "new"}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            stale_state = {"last_weekly_cleanup": (datetime.now() - timedelta(days=8)).isoformat()}
+            svc._save_cleanup_state(stale_state)
+            svc._maybe_weekly_cleanup()
+
+            self.assertFalse(old_run.exists())
+            self.assertTrue(new_run.exists())
+
+            remaining_lines = svc.events_path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(1, len(remaining_lines))
+            self.assertIn('"event": "new"', remaining_lines[0])
+
+            state = svc._load_cleanup_state()
+            self.assertIn("last_weekly_cleanup", state)
+
+    def test_weekly_cleanup_skips_when_recently_executed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            svc = self._build_service(base)
+
+            runs_root = base / "runs" / "issue_flow"
+            old_run = runs_root / "old-run"
+            old_run.mkdir(parents=True, exist_ok=True)
+            old_file = old_run / "old.png"
+            old_file.write_text("x", encoding="utf-8")
+            old_ts = time.time() - (8 * 24 * 60 * 60)
+            import os
+            os.utime(old_run, (old_ts, old_ts))
+            os.utime(old_file, (old_ts, old_ts))
+
+            recent_state = {"last_weekly_cleanup": datetime.now().isoformat()}
+            svc._save_cleanup_state(recent_state)
+            svc._maybe_weekly_cleanup()
+
+            self.assertTrue(old_run.exists())
 
 
 if __name__ == "__main__":
