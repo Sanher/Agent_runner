@@ -321,6 +321,15 @@ def create_ui_router(job_secret: str) -> APIRouter:
       box-sizing: border-box;
     }
 
+    .email-original {
+      min-height: 180px;
+      max-height: 280px;
+      overflow: auto;
+      font-family: Menlo, Consolas, monospace;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
     #tabIssue input.field,
     #tabIssue select.field {
       height: 44px;
@@ -2089,7 +2098,7 @@ async function loadSuggestions() {
       <div><b>${escapeHtml(item.subject)}</b></div>
       <div class='muted'>From: ${escapeHtml(item.from)} | Status: ${escapeHtml(item.status)}</div>
       <p><b>Original</b></p>
-      <pre>${escapeHtml((item.original_body || '').slice(0, 400))}</pre>
+      <textarea class='field email-original' readonly>${escapeHtml(item.original_body || '')}</textarea>
       <p><b>Suggested reply</b></p>
       <textarea id='reply-${safeId}'></textarea>
       <p><b>Compose email</b></p>
