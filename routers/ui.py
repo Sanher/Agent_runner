@@ -648,6 +648,10 @@ def create_ui_router(job_secret: str) -> APIRouter:
           <input id=\"issueDraftTitle\" class=\"field\" placeholder=\"Draft title\" />
           <label class=\"muted\">Draft description (editable)</label>
           <textarea id=\"issueDraftDescription\" class=\"field\" style=\"min-height:120px\" placeholder=\"Draft description\"></textarea>
+          <div id=\"issueDraftStepsRow\" style=\"display:none;\">
+            <label class=\"muted\">Draft steps to reproduce (editable, bug only)</label>
+            <textarea id=\"issueDraftSteps\" class=\"field\" style=\"min-height:110px\" placeholder=\"1. Go to ...&#10;2. Click ...&#10;3. See ...\"></textarea>
+          </div>
           <button onclick=\"submitIssueDraft()\" id=\"issueSubmitBtn\">Run in Playwright</button>
           <button onclick=\"clearIssueDraft()\" id=\"issueClearDraftBtn\">Clear suggestion (mark as done)</button>
           <button onclick=\"toggleIssuePlaywrightLog()\" id=\"issueToggleLogBtn\" style=\"display:none;\">Show Playwright log</button>
@@ -1298,8 +1302,14 @@ function renderIssueDraftEditor() {
   }
   const title = document.getElementById('issueDraftTitle');
   const description = document.getElementById('issueDraftDescription');
+  const stepsRow = document.getElementById('issueDraftStepsRow');
+  const steps = document.getElementById('issueDraftSteps');
+  const issueType = String((currentIssue && currentIssue.issue_type) || '').trim().toLowerCase();
+  const showSteps = issueType === 'bug';
   if (title) title.value = String(currentIssue.title || '');
   if (description) description.value = String(currentIssue.description || '');
+  if (stepsRow) stepsRow.style.display = showSteps ? 'block' : 'none';
+  if (steps) steps.value = showSteps ? String(currentIssue.steps_to_reproduce || '') : '';
   box.style.display = 'block';
   if (runtimeGrid) runtimeGrid.style.display = 'grid';
   if (!issueLogToggleAllowed) setIssueLogToggle(false, false);
@@ -1313,8 +1323,13 @@ function syncIssueDraftFromEditor() {
   if (!currentIssue) return;
   const title = document.getElementById('issueDraftTitle');
   const description = document.getElementById('issueDraftDescription');
+  const steps = document.getElementById('issueDraftSteps');
+  const issueType = String(currentIssue.issue_type || '').trim().toLowerCase();
   if (title) currentIssue.title = String(title.value || '').trim();
   if (description) currentIssue.description = String(description.value || '').trim();
+  if (steps && issueType === 'bug') {
+    currentIssue.steps_to_reproduce = String(steps.value || '').trim();
+  }
 }
 
 function clearIssueDraft() {

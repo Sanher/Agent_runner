@@ -24,6 +24,8 @@ class IssueUiBehaviorTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.text
         self.assertIn('id="issueToggleLogBtn"', html)
+        self.assertIn('id="issueDraftStepsRow"', html)
+        self.assertIn('id="issueDraftSteps"', html)
         self.assertIn("Show Playwright log", html)
         self.assertIn("function toggleIssuePlaywrightLog()", html)
 

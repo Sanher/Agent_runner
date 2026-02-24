@@ -990,6 +990,51 @@ class IssueAgentService:
             option.click(timeout=timeout_ms)
 
     @staticmethod
+    def _dismiss_open_overlays(page) -> None:
+        # Primer portal overlays can stay open and intercept pointer events in following clicks.
+        # Send Escape a couple of times to reliably close active dropdown/picker panels.
+        for _ in range(2):
+            try:
+                page.keyboard.press("Escape")
+            except Exception:
+                pass
+            try:
+                page.wait_for_timeout(150)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _click_locator_resilient(locator, timeout_ms: int = 5000) -> None:
+        locator.wait_for(state="visible", timeout=timeout_ms)
+        try:
+            locator.click(timeout=timeout_ms)
+        except Exception:
+            locator.click(timeout=timeout_ms, force=True)
+
+    def _open_project_field_button(self, page, label: str, timeout_ms: int = 5000) -> None:
+        last_error: Optional[Exception] = None
+        for _ in range(3):
+            attempt = _ + 1
+            self._dismiss_open_overlays(page)
+            button = page.locator("button").filter(has_text=label).first
+            try:
+                button.scroll_into_view_if_needed(timeout=2000)
+            except Exception:
+                pass
+            try:
+                self._debug("Opening project field", field=label, attempt=attempt, forced_click="false")
+                self._click_locator_resilient(button, timeout_ms=timeout_ms)
+                page.wait_for_timeout(220)
+                return
+            except Exception as err:
+                self._debug("Retry opening project field", field=label, attempt=attempt, forced_click="true")
+                last_error = err
+                page.wait_for_timeout(180)
+                continue
+        if last_error is not None:
+            raise last_error
+
+    @staticmethod
     def _append_issue_warning(issue: Dict[str, Any], message: str) -> None:
         warnings = issue.setdefault("_warnings", [])
         if isinstance(warnings, list):
@@ -1183,10 +1228,16 @@ class IssueAgentService:
         # Shared post-create metadata flow used across frontend/backend/management issue variants.
         self._debug("Applying post-create fields", status=status_label, unit=unit_label, team=team_label or "-")
         warnings: List[str] = []
-        if not self._ensure_project_post_fields_visible(page):
-            message = "Post-create project fields are still collapsed (Business Unit not visible)"
-            warnings.append(message)
-            self.logger.warning("Issue flow: %s", message)
+        field_results: Dict[str, bool] = {
+            "status": False,
+            "business_unit": False,
+            "team": not bool(team_label),
+            "sprint": False,
+            "creation_date": False,
+        }
+        project_fields_collapsed_initially = not self._ensure_project_post_fields_visible(page)
+        if project_fields_collapsed_initially:
+            self._debug("Post-create project fields initially collapsed; running retries before warning")
 
         status_error: Optional[Exception] = None
         for attempt in range(3):
@@ -1195,9 +1246,9 @@ class IssueAgentService:
                     self._ensure_project_post_fields_visible(page)
                     page.wait_for_timeout(500)
                 elif attempt == 1:
-                    page.locator("button").filter(has_text=re.compile(r"Status|Todo|Backlog", re.I)).first.click(
-                        timeout=4000
-                    )
+                    self._dismiss_open_overlays(page)
+                    status_button = page.locator("button").filter(has_text=re.compile(r"Status|Todo|Backlog", re.I)).first
+                    self._click_locator_resilient(status_button, timeout_ms=4000)
                     page.wait_for_timeout(500)
                 else:
                     page.keyboard.press("Escape")
@@ -1213,58 +1264,91 @@ class IssueAgentService:
                     else:
                         raise
                 status_error = None
+                field_results["status"] = True
+                self._dismiss_open_overlays(page)
                 break
             except Exception as err:
                 status_error = err
+                self._dismiss_open_overlays(page)
                 continue
 
         if status_error is not None:
             message = f"Post-create status selection failed after retries: {status_error}"
             warnings.append(message)
             self.logger.warning("Issue flow: %s", message)
+        self._dismiss_open_overlays(page)
 
         try:
-            page.locator("button").filter(has_text="Business Unit").first.click(timeout=5000)
+            self._open_project_field_button(page, "Business Unit", timeout_ms=5000)
             self._click_option_by_text(page, unit_label)
+            field_results["business_unit"] = True
+            self._dismiss_open_overlays(page)
         except Exception as err:
             message = f"Post-create business unit failed (unit={unit_label}): {err}"
             warnings.append(message)
             self.logger.warning("Issue flow: %s", message)
+            self._dismiss_open_overlays(page)
 
         if team_label:
             try:
                 page.wait_for_timeout(300)
-                page.locator("button").filter(has_text="Team").first.click(timeout=5000)
+                self._open_project_field_button(page, "Team", timeout_ms=5000)
                 self._click_option_by_text(page, team_label)
+                field_results["team"] = True
+                self._dismiss_open_overlays(page)
             except Exception as err:
                 message = f"Post-create team failed (team={team_label}): {err}"
                 warnings.append(message)
                 self.logger.warning("Issue flow: %s", message)
+                self._dismiss_open_overlays(page)
 
         try:
             page.wait_for_timeout(300)
-            page.locator("button").filter(has_text="Sprint").first.click(timeout=5000)
+            self._open_project_field_button(page, "Sprint", timeout_ms=5000)
             current_option = page.locator("li[role='option']").filter(has_text="Current").first
             current_option.wait_for(state="visible", timeout=5000)
             current_option.click(timeout=5000)
+            field_results["sprint"] = True
+            self._dismiss_open_overlays(page)
         except Exception as err:
             message = f"Post-create sprint failed (Current): {err}"
             warnings.append(message)
             self.logger.warning("Issue flow: %s", message)
+            self._dismiss_open_overlays(page)
 
         try:
             page.wait_for_timeout(300)
-            page.locator("button").filter(has_text="Creation Date").first.click(timeout=5000)
+            self._open_project_field_button(page, "Creation Date", timeout_ms=5000)
             target_date = datetime.now().strftime("%m/%d/%Y")
             day_cell = page.locator(f'div[role="gridcell"][data-date="{target_date}"]').first
             if day_cell.count() > 0:
                 day_cell.click(timeout=5000)
             else:
                 page.locator('div[role="gridcell"][aria-selected="true"]').first.click(timeout=5000)
+            field_results["creation_date"] = True
+            self._dismiss_open_overlays(page)
         except Exception as err:
             message = f"Post-create creation date failed: {err}"
             warnings.append(message)
             self.logger.warning("Issue flow: %s", message)
+            self._dismiss_open_overlays(page)
+
+        if project_fields_collapsed_initially:
+            if warnings:
+                message = "Post-create project fields are still collapsed (Business Unit not visible)"
+                warnings.append(message)
+                self.logger.warning("Issue flow: %s", message)
+            else:
+                self._debug("Post-create project fields recovered; no warning emitted")
+
+        self.logger.info(
+            "Issue flow: post-create fields result (status=%s, business_unit=%s, team=%s, sprint=%s, creation_date=%s)",
+            "ok" if field_results["status"] else "fail",
+            "ok" if field_results["business_unit"] else "fail",
+            "ok" if field_results["team"] else "fail",
+            "ok" if field_results["sprint"] else "fail",
+            "ok" if field_results["creation_date"] else "fail",
+        )
 
         return warnings
 
@@ -1336,6 +1420,7 @@ class IssueAgentService:
 
     def _apply_issue_type(self, page, issue_type: str) -> None:
         # Force GitHub issue type to match the requested workflow semantics.
+        self._dismiss_open_overlays(page)
         page.locator("button").filter(has_text="Edit Type").first.click()
         mapping = {
             "bug": "Bug",
@@ -1346,17 +1431,21 @@ class IssueAgentService:
         resolved_type = mapping.get(str(issue_type or "").strip().lower(), "Feature")
         self._debug("Applying issue type", requested=issue_type, resolved=resolved_type)
         self._click_option_by_text(page, resolved_type)
+        self._dismiss_open_overlays(page)
 
     def _apply_management_epic_new_feature(self, page) -> None:
         self._debug("Applying management epic", epic="NEW FEATURES REQUEST")
         try:
-            page.locator("button").filter(has_text="Epic").first.click()
+            self._dismiss_open_overlays(page)
+            self._open_project_field_button(page, "Epic", timeout_ms=5000)
             epic_search = page.locator('input[aria-label="Choose an option"]').first
             epic_search.fill("NEW FEATURE")
             page.wait_for_timeout(1200)
             self._click_option_by_text(page, "NEW FEATURES REQUEST")
+            self._dismiss_open_overlays(page)
         except Exception as err:
             self.logger.warning("Issue flow: failed to set epic 'NEW FEATURES REQUEST': %s", err)
+            self._dismiss_open_overlays(page)
 
     def _submit_management_feature_issue(self, page, issue: Dict[str, Any]) -> None:
         # Management "new feature" flow: blank issue + template body + backlog metadata + epic selection.

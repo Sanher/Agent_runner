@@ -83,7 +83,11 @@ class _FailingLocator:
 
 
 class _FakeKeyboard:
-    def press(self, *args, **kwargs):
+    def __init__(self):
+        self.pressed = []
+
+    def press(self, key, *args, **kwargs):
+        self.pressed.append(str(key))
         return None
 
 
@@ -93,6 +97,74 @@ class _FailingPage:
 
     def locator(self, *args, **kwargs):
         return _FailingLocator()
+
+    def wait_for_timeout(self, *args, **kwargs):
+        return None
+
+
+class _SuccessLocator:
+    @property
+    def first(self):
+        return self
+
+    def filter(self, **kwargs):
+        return self
+
+    def click(self, *args, **kwargs):
+        return None
+
+    def wait_for(self, *args, **kwargs):
+        return None
+
+    def count(self):
+        return 1
+
+    def get_attribute(self, *args, **kwargs):
+        return "false"
+
+
+class _SuccessPage:
+    def __init__(self):
+        self.keyboard = _FakeKeyboard()
+
+    def locator(self, *args, **kwargs):
+        return _SuccessLocator()
+
+    def wait_for_timeout(self, *args, **kwargs):
+        return None
+
+
+class _FlakyFieldLocator:
+    def __init__(self):
+        self.attempts = 0
+
+    @property
+    def first(self):
+        return self
+
+    def filter(self, **kwargs):
+        return self
+
+    def wait_for(self, *args, **kwargs):
+        return None
+
+    def scroll_into_view_if_needed(self, *args, **kwargs):
+        return None
+
+    def click(self, *args, **kwargs):
+        self.attempts += 1
+        if self.attempts < 3:
+            raise RuntimeError("click failed")
+        return None
+
+
+class _FlakyFieldPage:
+    def __init__(self):
+        self.keyboard = _FakeKeyboard()
+        self.field_locator = _FlakyFieldLocator()
+
+    def locator(self, *args, **kwargs):
+        return self.field_locator
 
     def wait_for_timeout(self, *args, **kwargs):
         return None
@@ -110,7 +182,7 @@ class IssueServiceTests(unittest.TestCase):
         return IssueAgentService(
             data_dir=data_dir,
             repo_base_url="https://example.test/test-org",
-            project_name="Dextools",
+            project_name="SampleProject",
             storage_state_path=str(data_dir / "storage" / "issue_agent.json"),
             openai_api_key="x",
             openai_model="gpt-5",
@@ -153,15 +225,57 @@ class IssueServiceTests(unittest.TestCase):
                     "management": "example-org/management",
                 },
                 bug_parent_issue_number_by_repo={
-                    "frontend": "56",
-                    "backend": "53",
-                    "management": "54",
+                    "frontend": "101",
+                    "backend": "202",
+                    "management": "303",
                 },
             )
             warning = svc._apply_bug_parent_relationship(page=_FailingPage(), repo="frontend")
             self.assertIsInstance(warning, str)
             self.assertIn("parent_repo=example-org/management", warning)
-            self.assertIn("parent_issue=56", warning)
+            self.assertIn("parent_issue=101", warning)
+
+    def test_apply_post_creation_fields_drops_collapsed_warning_when_recovered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _SuccessPage()
+            calls = {"count": 0}
+
+            def _ensure_visible(_page):
+                calls["count"] += 1
+                return calls["count"] > 1
+
+            svc._ensure_project_post_fields_visible = _ensure_visible
+            svc._click_option_by_text = lambda *args, **kwargs: None
+
+            warnings = svc._apply_post_creation_fields(
+                page=page,
+                unit_label="Customer",
+                team_label="Frontend",
+                status_label="Todo",
+            )
+            self.assertEqual([], warnings)
+
+    def test_apply_post_creation_fields_dismisses_overlays_after_field_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _SuccessPage()
+            warnings = svc._apply_post_creation_fields(
+                page=page,
+                unit_label="Customer",
+                team_label="Frontend",
+                status_label="Backlog",
+            )
+            self.assertEqual([], warnings)
+            self.assertGreaterEqual(page.keyboard.pressed.count("Escape"), 2)
+
+    def test_open_project_field_button_retries_until_click_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _FlakyFieldPage()
+            svc._open_project_field_button(page, "Business Unit", timeout_ms=50)
+            self.assertEqual(3, page.field_locator.attempts)
+            self.assertGreaterEqual(page.keyboard.pressed.count("Escape"), 2)
 
 
 if __name__ == "__main__":
