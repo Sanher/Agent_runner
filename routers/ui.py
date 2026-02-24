@@ -277,6 +277,13 @@ def create_ui_router(job_secret: str) -> APIRouter:
         0 0 1px rgba(240, 253, 244, 0.9);
     }
 
+    #status.status-warning {
+      color: #facc15;
+      text-shadow:
+        0 0 8px rgba(250, 204, 21, 0.35),
+        0 0 1px rgba(254, 249, 195, 0.9);
+    }
+
     #status.status-hidden {
       opacity: 0;
     }
@@ -633,6 +640,8 @@ def create_ui_router(job_secret: str) -> APIRouter:
           <label class=\"muted\">Draft description (editable)</label>
           <textarea id=\"issueDraftDescription\" class=\"field\" style=\"min-height:120px\" placeholder=\"Draft description\"></textarea>
           <button onclick=\"submitIssueDraft()\" id=\"issueSubmitBtn\">Run in Playwright</button>
+          <button onclick=\"clearIssueDraft()\" id=\"issueClearDraftBtn\">Clear suggestion (mark as done)</button>
+          <button onclick=\"toggleIssuePlaywrightLog()\" id=\"issueToggleLogBtn\" style=\"display:none;\">Show Playwright log</button>
           <div id=\"issueSubmitStatus\" class=\"muted\"></div>
         </div>
         <div id=\"issuePlaywrightLogWrap\" class=\"issue-log-panel\" style=\"display:none;\">
@@ -714,6 +723,7 @@ let answersArchivedVisible = false;
 let emailReviewedVisible = false;
 let statusDismissTimer = null;
 let issuePlaywrightLogLines = [];
+let issueLogToggleAllowed = false;
 let emailSettingsCache = {
   default_from_email: '',
   default_cc_email: ''
@@ -759,6 +769,7 @@ function setStatus(text) {
   statusEl.classList.remove('status-hidden');
   statusEl.classList.remove('status-error');
   statusEl.classList.remove('status-success');
+  statusEl.classList.remove('status-warning');
 
   if (!message) {
     statusEl.innerText = '';
@@ -766,9 +777,12 @@ function setStatus(text) {
   }
 
   const isError = /(error|failed|invalid|unauthorized|forbidden|denied|unable|reject|timeout|exception)/i.test(message);
-  const isSuccess = !isError && /(saved|sent|created|updated|marked|unarchived|archived|executed|generated|received|moved|removed|completed|reset|succeeded|success)/i.test(message);
+  const isWarning = !isError && /(warning|partial|non-blocking|check log|check logs|review log)/i.test(message);
+  const isSuccess = !isError && !isWarning && /(saved|sent|created|updated|marked|unarchived|archived|executed|generated|received|moved|removed|completed|reset|succeeded|success|all post-create clicks succeeded|todo ok)/i.test(message);
   if (isError) {
     statusEl.classList.add('status-error');
+  } else if (isWarning) {
+    statusEl.classList.add('status-warning');
   } else if (isSuccess) {
     statusEl.classList.add('status-success');
   }
@@ -779,6 +793,7 @@ function setStatus(text) {
     statusEl.innerText = '';
     statusEl.classList.remove('status-error');
     statusEl.classList.remove('status-success');
+    statusEl.classList.remove('status-warning');
     statusDismissTimer = null;
   }, 20000);
 }
@@ -1204,8 +1219,11 @@ function clearIssuePlaywrightLog(hidePanel = false) {
   issuePlaywrightLogLines = [];
   const logBox = document.getElementById('issuePlaywrightLog');
   const logWrap = document.getElementById('issuePlaywrightLogWrap');
+  const logToggle = document.getElementById('issueToggleLogBtn');
   if (logBox) logBox.innerText = 'No execution logs yet.';
   if (hidePanel && logWrap) logWrap.style.display = 'none';
+  if (hidePanel && logToggle) logToggle.style.display = 'none';
+  if (hidePanel) issueLogToggleAllowed = false;
 }
 
 function appendIssuePlaywrightLog(message) {
@@ -1221,6 +1239,37 @@ function appendIssuePlaywrightLog(message) {
   logWrap.style.display = 'block';
   logBox.innerText = issuePlaywrightLogLines.join('\\n');
   logBox.scrollTop = logBox.scrollHeight;
+  const logToggle = document.getElementById('issueToggleLogBtn');
+  if (issueLogToggleAllowed && logToggle) {
+    logToggle.innerText = 'Hide Playwright log';
+  }
+}
+
+function setIssueLogToggle(allowed, openPanel = false) {
+  issueLogToggleAllowed = !!allowed;
+  const logWrap = document.getElementById('issuePlaywrightLogWrap');
+  const logToggle = document.getElementById('issueToggleLogBtn');
+  if (logToggle) {
+    logToggle.style.display = issueLogToggleAllowed ? 'inline-block' : 'none';
+  }
+  if (logWrap) {
+    logWrap.style.display = openPanel ? 'block' : 'none';
+  }
+  if (logToggle) {
+    logToggle.innerText = (logWrap && logWrap.style.display !== 'none')
+      ? 'Hide Playwright log'
+      : 'Show Playwright log';
+  }
+}
+
+function toggleIssuePlaywrightLog() {
+  if (!issueLogToggleAllowed) return;
+  const logWrap = document.getElementById('issuePlaywrightLogWrap');
+  const logToggle = document.getElementById('issueToggleLogBtn');
+  if (!logWrap || !logToggle) return;
+  const currentlyVisible = logWrap.style.display !== 'none';
+  logWrap.style.display = currentlyVisible ? 'none' : 'block';
+  logToggle.innerText = currentlyVisible ? 'Show Playwright log' : 'Hide Playwright log';
 }
 
 function renderIssueDraftEditor() {
@@ -1244,6 +1293,7 @@ function renderIssueDraftEditor() {
   if (description) description.value = String(currentIssue.description || '');
   box.style.display = 'block';
   if (runtimeGrid) runtimeGrid.style.display = 'grid';
+  if (!issueLogToggleAllowed) setIssueLogToggle(false, false);
   if (jsonBox) {
     jsonBox.style.display = 'block';
     jsonBox.innerText = JSON.stringify(currentIssue || {}, null, 2);
@@ -1256,6 +1306,21 @@ function syncIssueDraftFromEditor() {
   const description = document.getElementById('issueDraftDescription');
   if (title) currentIssue.title = String(title.value || '').trim();
   if (description) currentIssue.description = String(description.value || '').trim();
+}
+
+function clearIssueDraft() {
+  currentIssue = null;
+  const issueSubmitStatus = document.getElementById('issueSubmitStatus');
+  const issueGenerateStatus = document.getElementById('issueGenerateStatus');
+  const issueUserInput = document.getElementById('issueUserInput');
+  const issueCommentNumber = document.getElementById('issueCommentNumber');
+  if (issueSubmitStatus) issueSubmitStatus.innerText = '';
+  if (issueGenerateStatus) issueGenerateStatus.innerText = 'Draft cleared manually';
+  if (issueUserInput) issueUserInput.value = '';
+  if (issueCommentNumber) issueCommentNumber.value = '';
+  setIssueLogToggle(false, false);
+  renderIssueDraftEditor();
+  setStatus('Todo OK: draft cleared manually and marked as done');
 }
 
 async function submitIssueDraft() {
@@ -1277,6 +1342,8 @@ async function submitIssueDraft() {
   btn.disabled = true;
   btn.innerText = 'Submitting...';
   document.getElementById('issueSubmitStatus').innerText = '';
+  // While Playwright is running, keep the log panel visible as live output.
+  setIssueLogToggle(false, true);
   try {
     appendIssuePlaywrightLog('Sending draft to /issue-agent/submit...');
     const r = await fetch(withIssueSecret('/submit'), {
@@ -1296,6 +1363,7 @@ async function submitIssueDraft() {
     const artifactsDir = String(result.artifacts_dir || '').trim();
     const summary = String(result.summary || '').trim();
     const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+    const createdInGithub = finalUrl.includes('/issues/') && /[0-9]+([?#].*)?$/.test(finalUrl);
     if (finalUrl) currentIssue.generated_link = finalUrl;
     appendIssuePlaywrightLog('Playwright execution finished successfully.');
     if (summary) appendIssuePlaywrightLog(summary);
@@ -1306,14 +1374,32 @@ async function submitIssueDraft() {
       appendIssuePlaywrightLog(`Completed with ${warnings.length} non-blocking warning(s):`);
       warnings.forEach((w) => appendIssuePlaywrightLog(`- ${String(w)}`));
     }
-    document.getElementById('issueSubmitStatus').innerText = finalUrl
-      ? `Submitted: ${finalUrl}`
-      : 'Submitted via Playwright';
+    if (createdInGithub && warnings.length === 0) {
+      document.getElementById('issueSubmitStatus').innerText = `Submitted: ${finalUrl}`;
+      setStatus('Todo OK: issue created and all post-create clicks succeeded');
+      setIssueLogToggle(false, false);
+    } else if (createdInGithub) {
+      document.getElementById('issueSubmitStatus').innerText = `Submitted with warnings: ${finalUrl}`;
+      setStatus('Warning: issue created but some fields were not clicked. Check Playwright log.');
+      setIssueLogToggle(true, false);
+    } else {
+      document.getElementById('issueSubmitStatus').innerText = 'Create did not complete issue creation';
+      setStatus('Error: issue was not created (Create did not navigate). Check Playwright log.');
+      setIssueLogToggle(true, true);
+    }
     renderIssueDraftEditor();
-    setStatus('Issue submitted via Playwright');
   } catch (err) {
-    appendIssuePlaywrightLog(`Playwright execution failed: ${err}`);
-    document.getElementById('issueSubmitStatus').innerText = `Error submitting draft: ${err}`;
+    const errText = String(err || '');
+    appendIssuePlaywrightLog(`Playwright execution failed: ${errText}`);
+    document.getElementById('issueSubmitStatus').innerText = `Error submitting draft: ${errText}`;
+    setIssueLogToggle(true, true);
+    if (/Create did not navigate to created issue/i.test(errText)) {
+      setStatus('Error: issue was not created by Create. Check Playwright log.');
+    } else if (/load failed/i.test(errText)) {
+      setStatus('Warning: request connection failed while processing. Check Playwright log and addon logs.');
+    } else {
+      setStatus(`Error submitting issue: ${errText}`);
+    }
   } finally {
     btn.disabled = false;
     btn.innerText = oldText;
@@ -1384,7 +1470,8 @@ async function generateIssueDraft() {
     currentIssue = data.item || null;
     document.getElementById('issueGenerateStatus').innerText = `Draft generated: ${currentIssue && currentIssue.issue_id ? currentIssue.issue_id : 'unknown'}`;
     document.getElementById('issueSubmitStatus').innerText = '';
-    clearIssuePlaywrightLog(false);
+    clearIssuePlaywrightLog(true);
+    setIssueLogToggle(false, false);
     appendIssuePlaywrightLog('Draft generated and ready for review.');
     renderIssueDraftEditor();
     if (includeComment) {
