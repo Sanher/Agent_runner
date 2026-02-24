@@ -852,6 +852,24 @@ class IssueAgentService:
             self._persist_status({"ok": True, "message": "Issue submitted", "updated_at": datetime.now().isoformat()})
             self.logger.info("Issue submission completed (issue_id=%s)", issue.get("issue_id", ""))
             final_url = page.url if "page" in locals() else str(issue.get("generated_link", "")).strip()
+            non_blocking_warnings = issue.get("_warnings", []) if isinstance(issue.get("_warnings", []), list) else []
+            summary_text = (
+                f"Playwright summary: issue_id={issue.get('issue_id', '')} "
+                f"repo={self._normalize_repo(str(issue.get('repo', '')))} "
+                f"url={self._sanitize_url_for_log(final_url)} "
+                f"warnings={len(non_blocking_warnings)} "
+                f"run_id={run_id} "
+                f"artifacts={run_dir}"
+            )
+            if non_blocking_warnings:
+                self.logger.warning(
+                    "Issue flow completed with non-blocking warnings (issue_id=%s, count=%s)",
+                    issue.get("issue_id", ""),
+                    len(non_blocking_warnings),
+                )
+                for warning in non_blocking_warnings:
+                    self.logger.warning("Issue flow warning: %s", warning)
+            self.logger.info(summary_text)
             self.logger.info(
                 "Issue flow finish: issue_id=%s run_id=%s issue_url=%s project=%s unit=%s team=%s status=%s sprint=%s creation_date=%s parent=%s artifacts=%s",
                 issue.get("issue_id", ""),
@@ -874,6 +892,8 @@ class IssueAgentService:
                 "run_id": run_id,
                 "artifacts_dir": str(run_dir),
                 "artifacts": artifacts,
+                "warnings": non_blocking_warnings,
+                "summary": summary_text,
             }
         except PlaywrightTimeoutError as err:
             self._persist_status({"ok": False, "message": f"Timeout Playwright: {err}", "updated_at": datetime.now().isoformat()})
@@ -954,6 +974,12 @@ class IssueAgentService:
         if selected != "true":
             option.click()
 
+    @staticmethod
+    def _append_issue_warning(issue: Dict[str, Any], message: str) -> None:
+        warnings = issue.setdefault("_warnings", [])
+        if isinstance(warnings, list):
+            warnings.append(message)
+
     def _open_projects_editor(self, page) -> None:
         button = page.locator("button#create-issue-sidebar-projects-section-heading").first
         if button.count() == 0:
@@ -964,13 +990,62 @@ class IssueAgentService:
         except Exception:
             button.click(timeout=8000, force=True)
 
+    def _click_create_and_wait_created(self, page, repo: str, issue_type: str, issue_id: str) -> None:
+        create_button = page.locator('[data-testid="create-issue-button"]').first
+        if create_button.count() == 0:
+            create_button = page.get_by_role("button", name=re.compile(r"^Create$", re.I)).first
+
+        create_button.wait_for(state="visible", timeout=10000)
+        self.logger.info(
+            "Issue flow: clicking Create (repo=%s, issue_type=%s, issue_id=%s)",
+            repo,
+            issue_type,
+            issue_id,
+        )
+        try:
+            create_button.click(timeout=10000)
+        except Exception:
+            create_button.click(timeout=10000, force=True)
+
+        created_regex = re.compile(r".*/issues/\d+(?:[?#].*)?$")
+        created = False
+        for shortcut in ("Meta+Enter", "Control+Enter"):
+            try:
+                page.wait_for_url(created_regex, timeout=9000)
+                created = True
+                break
+            except Exception:
+                try:
+                    page.keyboard.press(shortcut)
+                except Exception:
+                    pass
+                page.wait_for_timeout(350)
+
+        if not created:
+            try:
+                page.wait_for_url(created_regex, timeout=4000)
+                created = True
+            except Exception:
+                created = False
+
+        self.logger.info(
+            "Issue flow: create submitted, entering post-create fields (repo=%s, issue_type=%s, url=%s)",
+            repo,
+            issue_type,
+            self._sanitize_url_for_log(page.url),
+        )
+        if not created:
+            raise RuntimeError(
+                f"Create did not navigate to created issue (repo={repo}, issue_type={issue_type}, url={page.url})"
+            )
+
     def _apply_bug_parent_relationship(
         self,
         page,
         repo: str,
         parent_repo_override: str = "",
         parent_issue_number_override: str = "",
-    ) -> None:
+    ) -> Optional[str]:
         repo_key = str(repo or "").strip().lower()
         parent_repo = str(parent_repo_override or "").strip() or self.bug_parent_repo_by_repo.get(repo_key, "")
         parent_issue_number = str(parent_issue_number_override or "").strip() or self.bug_parent_issue_number_by_repo.get(
@@ -978,7 +1053,7 @@ class IssueAgentService:
         )
         if not parent_repo or not parent_issue_number:
             self.logger.warning("Issue flow: parent relationship skipped (missing target for repo=%s)", repo_key)
-            return
+            return f"Parent relationship skipped: missing target for repo '{repo_key}'"
         self._debug(
             "Applying parent relationship",
             repo=repo_key,
@@ -999,6 +1074,7 @@ class IssueAgentService:
             parent_issue.wait_for(state="visible", timeout=8000)
             parent_issue.click()
             self._debug("Parent relationship selected", parent_issue=parent_issue_number)
+            return None
         except Exception as err:
             self.logger.warning(
                 "Issue flow: failed to apply parent relationship (repo=%s, parent_repo=%s, parent_issue=%s, error=%s)",
@@ -1007,47 +1083,97 @@ class IssueAgentService:
                 parent_issue_number,
                 err,
             )
+            return (
+                f"Parent relationship failed (repo={repo_key}, parent_repo={parent_repo}, "
+                f"parent_issue={parent_issue_number}): {err}"
+            )
 
     def _apply_post_creation_fields(
         self, page, unit_label: str, team_label: str = "", status_label: str = "Todo"
-    ) -> None:
+    ) -> List[str]:
         # Shared post-create metadata flow used across frontend/backend/management issue variants.
         self._debug("Applying post-create fields", status=status_label, unit=unit_label, team=team_label or "-")
-        chevron = page.locator('button[data-component="IconButton"]').first
-        chevron.click()
-        page.wait_for_timeout(2000)
-        chevron.click()
-        page.wait_for_timeout(1000)
-        try:
-            self._click_option_by_text(page, status_label)
-        except Exception:
-            if status_label != "Todo":
-                self._click_option_by_text(page, "Todo")
-            else:
-                raise
+        warnings: List[str] = []
+        status_error: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                if attempt == 0:
+                    chevron = page.locator('button[data-component="IconButton"]').first
+                    chevron.click()
+                    page.wait_for_timeout(1200)
+                    chevron.click()
+                    page.wait_for_timeout(700)
+                elif attempt == 1:
+                    page.locator("button").filter(has_text=re.compile(r"Status|Todo|Backlog", re.I)).first.click()
+                    page.wait_for_timeout(500)
+                else:
+                    page.keyboard.press("Escape")
+                    page.wait_for_timeout(250)
+                    page.locator('button[data-component="IconButton"]').first.click()
+                    page.wait_for_timeout(500)
 
-        page.locator("button").filter(has_text="Business Unit").first.click()
-        self._click_option_by_text(page, unit_label)
+                try:
+                    self._click_option_by_text(page, status_label)
+                except Exception:
+                    if status_label != "Todo":
+                        self._click_option_by_text(page, "Todo")
+                    else:
+                        raise
+                status_error = None
+                break
+            except Exception as err:
+                status_error = err
+                continue
+
+        if status_error is not None:
+            message = f"Post-create status selection failed after retries: {status_error}"
+            warnings.append(message)
+            self.logger.warning("Issue flow: %s", message)
+
+        try:
+            page.locator("button").filter(has_text="Business Unit").first.click()
+            self._click_option_by_text(page, unit_label)
+        except Exception as err:
+            message = f"Post-create business unit failed (unit={unit_label}): {err}"
+            warnings.append(message)
+            self.logger.warning("Issue flow: %s", message)
 
         if team_label:
+            try:
+                page.wait_for_timeout(300)
+                page.locator("button").filter(has_text="Team").first.click()
+                self._click_option_by_text(page, team_label)
+            except Exception as err:
+                message = f"Post-create team failed (team={team_label}): {err}"
+                warnings.append(message)
+                self.logger.warning("Issue flow: %s", message)
+
+        try:
             page.wait_for_timeout(300)
-            page.locator("button").filter(has_text="Team").first.click()
-            self._click_option_by_text(page, team_label)
+            page.locator("button").filter(has_text="Sprint").first.click()
+            current_option = page.locator("li[role='option']").filter(has_text="Current").first
+            current_option.wait_for(state="visible", timeout=6000)
+            current_option.click()
+        except Exception as err:
+            message = f"Post-create sprint failed (Current): {err}"
+            warnings.append(message)
+            self.logger.warning("Issue flow: %s", message)
 
-        page.wait_for_timeout(300)
-        page.locator("button").filter(has_text="Sprint").first.click()
-        current_option = page.locator("li[role='option']").filter(has_text="Current").first
-        current_option.wait_for(state="visible", timeout=6000)
-        current_option.click()
+        try:
+            page.wait_for_timeout(300)
+            page.locator("button").filter(has_text="Creation Date").first.click()
+            target_date = datetime.now().strftime("%m/%d/%Y")
+            day_cell = page.locator(f'div[role="gridcell"][data-date="{target_date}"]').first
+            if day_cell.count() > 0:
+                day_cell.click()
+            else:
+                page.locator('div[role="gridcell"][aria-selected="true"]').first.click()
+        except Exception as err:
+            message = f"Post-create creation date failed: {err}"
+            warnings.append(message)
+            self.logger.warning("Issue flow: %s", message)
 
-        page.wait_for_timeout(300)
-        page.locator("button").filter(has_text="Creation Date").first.click()
-        target_date = datetime.now().strftime("%m/%d/%Y")
-        day_cell = page.locator(f'div[role="gridcell"][data-date="{target_date}"]').first
-        if day_cell.count() > 0:
-            day_cell.click()
-        else:
-            page.locator('div[role="gridcell"][aria-selected="true"]').first.click()
+        return warnings
 
     @staticmethod
     def _backend_bug_markdown_body(description: str, steps: str) -> str:
@@ -1155,24 +1281,22 @@ class IssueAgentService:
         self._open_projects_editor(page)
         self._ensure_project_selected(page)
 
-        self.logger.info(
-            "Issue flow: clicking Create (repo=management, issue_type=feature, issue_id=%s)",
-            issue.get("issue_id", ""),
-        )
-        page.locator('[data-testid="create-issue-button"]').first.click()
-        page.wait_for_timeout(5000)
-        self.logger.info(
-            "Issue flow: create submitted, entering post-create fields (repo=management, issue_type=feature, url=%s)",
-            self._sanitize_url_for_log(page.url),
+        self._click_create_and_wait_created(
+            page,
+            repo="management",
+            issue_type="feature",
+            issue_id=str(issue.get("issue_id", "")),
         )
 
         self._apply_issue_type(page, "feature")
-        self._apply_post_creation_fields(
+        field_warnings = self._apply_post_creation_fields(
             page,
             unit_label=self._frontend_unit_label(str(issue.get("unit", ""))),
             team_label=self._frontend_team_label("management"),
             status_label="Backlog",
         )
+        for warning in field_warnings:
+            self._append_issue_warning(issue, warning)
         self._apply_management_epic_new_feature(page)
 
     def _submit_management_third_party_issue(self, page, issue: Dict[str, Any]) -> None:
@@ -1192,27 +1316,25 @@ class IssueAgentService:
         self._open_projects_editor(page)
         self._ensure_project_selected(page)
 
-        self.logger.info(
-            "Issue flow: clicking Create (repo=management, issue_type=%s, issue_id=%s)",
-            issue_type,
-            issue.get("issue_id", ""),
-        )
-        page.locator('[data-testid="create-issue-button"]').first.click()
-        page.wait_for_timeout(5000)
-        self.logger.info(
-            "Issue flow: create submitted, entering post-create fields (repo=management, issue_type=%s, url=%s)",
-            issue_type,
-            self._sanitize_url_for_log(page.url),
+        self._click_create_and_wait_created(
+            page,
+            repo="management",
+            issue_type=issue_type or "task",
+            issue_id=str(issue.get("issue_id", "")),
         )
 
         self._apply_issue_type(page, issue_type)
-        self._apply_post_creation_fields(
+        field_warnings = self._apply_post_creation_fields(
             page,
             unit_label=self._frontend_unit_label(str(issue.get("unit", ""))),
             team_label="",
             status_label="Backlog",
         )
-        self._apply_bug_parent_relationship(page, repo="management")
+        for warning in field_warnings:
+            self._append_issue_warning(issue, warning)
+        parent_warning = self._apply_bug_parent_relationship(page, repo="management")
+        if parent_warning:
+            self._append_issue_warning(issue, parent_warning)
 
     def _submit_issue_comment(self, page, issue: Dict[str, Any]) -> None:
         # Comment-only flow for existing issues: write comment and optionally close in a single action.
@@ -1284,28 +1406,26 @@ class IssueAgentService:
         self._open_projects_editor(page)
         self._ensure_project_selected(page)
 
-        self.logger.info(
-            "Issue flow: clicking Create (repo=backend, issue_type=%s, issue_id=%s)",
-            issue_type,
-            issue.get("issue_id", ""),
-        )
-        page.locator('[data-testid="create-issue-button"]').first.click()
-        page.wait_for_timeout(5000)
-        self.logger.info(
-            "Issue flow: create submitted, entering post-create fields (repo=backend, issue_type=%s, url=%s)",
-            issue_type,
-            self._sanitize_url_for_log(page.url),
+        self._click_create_and_wait_created(
+            page,
+            repo="backend",
+            issue_type=issue_type or "task",
+            issue_id=str(issue.get("issue_id", "")),
         )
 
-        self._apply_post_creation_fields(
+        field_warnings = self._apply_post_creation_fields(
             page,
             unit_label="Core"
             if issue_type in {"blockchain", "exchange"}
             else self._frontend_unit_label(str(issue.get("unit", ""))),
             team_label="Backend",
         )
+        for warning in field_warnings:
+            self._append_issue_warning(issue, warning)
         if issue_type == "bug":
-            self._apply_bug_parent_relationship(page, str(issue.get("repo", "")))
+            parent_warning = self._apply_bug_parent_relationship(page, str(issue.get("repo", "")))
+            if parent_warning:
+                self._append_issue_warning(issue, parent_warning)
 
     def _submit_frontend_issue(self, page, issue: Dict[str, Any]) -> None:
         issue_type = str(issue.get("issue_type", "")).strip().lower()
@@ -1348,31 +1468,28 @@ class IssueAgentService:
             page.locator("textarea[placeholder*=\"I can't save a wallet\"]").first.fill(description)
             page.locator('textarea[placeholder^="1. Go to Wallet page"]').first.fill(steps)
 
-        if issue_type == "bug":
-            self._apply_bug_parent_relationship(page, str(issue.get("repo", "")))
-
         # Projects field: ensure the configured project is selected.
         self._open_projects_editor(page)
         self._ensure_project_selected(page)
 
-        self.logger.info(
-            "Issue flow: clicking Create (repo=frontend, issue_type=%s, issue_id=%s)",
-            issue_type,
-            issue.get("issue_id", ""),
-        )
-        page.locator('[data-testid="create-issue-button"]').first.click()
-        page.wait_for_timeout(5000)
-        self.logger.info(
-            "Issue flow: create submitted, entering post-create fields (repo=frontend, issue_type=%s, url=%s)",
-            issue_type,
-            self._sanitize_url_for_log(page.url),
+        self._click_create_and_wait_created(
+            page,
+            repo="frontend",
+            issue_type=issue_type or "task",
+            issue_id=str(issue.get("issue_id", "")),
         )
 
-        self._apply_post_creation_fields(
+        field_warnings = self._apply_post_creation_fields(
             page,
             unit_label=self._frontend_unit_label(str(issue.get("unit", ""))),
             team_label=self._frontend_team_label(str(issue.get("repo", ""))),
         )
+        for warning in field_warnings:
+            self._append_issue_warning(issue, warning)
+        if issue_type == "bug":
+            parent_warning = self._apply_bug_parent_relationship(page, str(issue.get("repo", "")))
+            if parent_warning:
+                self._append_issue_warning(issue, parent_warning)
 
     def send_webhook_report(self, reason: str, details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if not self.webhook_url.strip():
