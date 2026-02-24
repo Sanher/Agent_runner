@@ -1321,6 +1321,12 @@ function clearIssueDraft() {
   setIssueLogToggle(false, false);
   renderIssueDraftEditor();
   setStatus('Todo OK: draft cleared manually and marked as done');
+  setTimeout(() => {
+    const statusEl = document.getElementById('issueGenerateStatus');
+    if (statusEl && String(statusEl.innerText || '').trim() === 'Draft cleared manually') {
+      statusEl.innerText = '';
+    }
+  }, 10000);
 }
 
 async function submitIssueDraft() {
