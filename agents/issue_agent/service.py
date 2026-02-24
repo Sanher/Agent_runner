@@ -1061,18 +1061,25 @@ class IssueAgentService:
             parent_issue=parent_issue_number,
         )
         try:
-            page.locator("button").filter(has_text="Edit Relationships").first.click()
+            edit_relationships_btn = page.locator("button").filter(has_text="Edit Relationships").first
+            edit_relationships_btn.scroll_into_view_if_needed(timeout=3000)
+            try:
+                edit_relationships_btn.click(timeout=7000)
+            except Exception:
+                edit_relationships_btn.click(timeout=7000, force=True)
             page.wait_for_timeout(2000)
-            page.locator("li[role='menuitem']").filter(has_text="Add parent").first.click()
-            page.locator('[data-testid="back-to-repo-selection-button"]').first.click()
+            add_parent_item = page.locator("li[role='menuitem']").filter(has_text="Add parent").first
+            add_parent_item.wait_for(state="visible", timeout=7000)
+            add_parent_item.click(timeout=7000)
+            page.locator('[data-testid="back-to-repo-selection-button"]').first.click(timeout=7000)
             self._click_option_by_text(page, parent_repo)
             page.wait_for_timeout(2000)
             issue_search = page.locator('input[aria-label="Search issues"]').first
-            issue_search.fill(parent_issue_number)
+            issue_search.fill(parent_issue_number, timeout=7000)
             page.wait_for_timeout(5000)
             parent_issue = page.locator("li[role='option']").filter(has_text=f"#{parent_issue_number}").first
-            parent_issue.wait_for(state="visible", timeout=8000)
-            parent_issue.click()
+            parent_issue.wait_for(state="visible", timeout=7000)
+            parent_issue.click(timeout=7000)
             self._debug("Parent relationship selected", parent_issue=parent_issue_number)
             return None
         except Exception as err:
@@ -1088,28 +1095,49 @@ class IssueAgentService:
                 f"parent_issue={parent_issue_number}): {err}"
             )
 
+    def _ensure_project_post_fields_visible(self, page) -> None:
+        # GitHub project metadata can be collapsed right after create.
+        # Open the chevron container before trying Status/Unit/Team/Sprint/Date.
+        for _ in range(3):
+            if page.locator("button").filter(has_text="Business Unit").count() > 0:
+                return
+            collapsed = page.locator("button[data-component='IconButton'][aria-expanded='false']")
+            if collapsed.count() == 0:
+                return
+            try:
+                collapsed.first.click(timeout=4000)
+            except Exception:
+                try:
+                    collapsed.first.click(timeout=4000, force=True)
+                except Exception:
+                    return
+            page.wait_for_timeout(450)
+
     def _apply_post_creation_fields(
         self, page, unit_label: str, team_label: str = "", status_label: str = "Todo"
     ) -> List[str]:
         # Shared post-create metadata flow used across frontend/backend/management issue variants.
         self._debug("Applying post-create fields", status=status_label, unit=unit_label, team=team_label or "-")
+        self._ensure_project_post_fields_visible(page)
         warnings: List[str] = []
         status_error: Optional[Exception] = None
         for attempt in range(3):
             try:
                 if attempt == 0:
                     chevron = page.locator('button[data-component="IconButton"]').first
-                    chevron.click()
+                    chevron.click(timeout=4000)
                     page.wait_for_timeout(1200)
-                    chevron.click()
+                    chevron.click(timeout=4000)
                     page.wait_for_timeout(700)
                 elif attempt == 1:
-                    page.locator("button").filter(has_text=re.compile(r"Status|Todo|Backlog", re.I)).first.click()
+                    page.locator("button").filter(has_text=re.compile(r"Status|Todo|Backlog", re.I)).first.click(
+                        timeout=4000
+                    )
                     page.wait_for_timeout(500)
                 else:
                     page.keyboard.press("Escape")
                     page.wait_for_timeout(250)
-                    page.locator('button[data-component="IconButton"]').first.click()
+                    page.locator('button[data-component="IconButton"]').first.click(timeout=4000)
                     page.wait_for_timeout(500)
 
                 try:
@@ -1131,7 +1159,7 @@ class IssueAgentService:
             self.logger.warning("Issue flow: %s", message)
 
         try:
-            page.locator("button").filter(has_text="Business Unit").first.click()
+            page.locator("button").filter(has_text="Business Unit").first.click(timeout=5000)
             self._click_option_by_text(page, unit_label)
         except Exception as err:
             message = f"Post-create business unit failed (unit={unit_label}): {err}"
@@ -1141,7 +1169,7 @@ class IssueAgentService:
         if team_label:
             try:
                 page.wait_for_timeout(300)
-                page.locator("button").filter(has_text="Team").first.click()
+                page.locator("button").filter(has_text="Team").first.click(timeout=5000)
                 self._click_option_by_text(page, team_label)
             except Exception as err:
                 message = f"Post-create team failed (team={team_label}): {err}"
@@ -1150,10 +1178,10 @@ class IssueAgentService:
 
         try:
             page.wait_for_timeout(300)
-            page.locator("button").filter(has_text="Sprint").first.click()
+            page.locator("button").filter(has_text="Sprint").first.click(timeout=5000)
             current_option = page.locator("li[role='option']").filter(has_text="Current").first
-            current_option.wait_for(state="visible", timeout=6000)
-            current_option.click()
+            current_option.wait_for(state="visible", timeout=5000)
+            current_option.click(timeout=5000)
         except Exception as err:
             message = f"Post-create sprint failed (Current): {err}"
             warnings.append(message)
@@ -1161,13 +1189,13 @@ class IssueAgentService:
 
         try:
             page.wait_for_timeout(300)
-            page.locator("button").filter(has_text="Creation Date").first.click()
+            page.locator("button").filter(has_text="Creation Date").first.click(timeout=5000)
             target_date = datetime.now().strftime("%m/%d/%Y")
             day_cell = page.locator(f'div[role="gridcell"][data-date="{target_date}"]').first
             if day_cell.count() > 0:
-                day_cell.click()
+                day_cell.click(timeout=5000)
             else:
-                page.locator('div[role="gridcell"][aria-selected="true"]').first.click()
+                page.locator('div[role="gridcell"][aria-selected="true"]').first.click(timeout=5000)
         except Exception as err:
             message = f"Post-create creation date failed: {err}"
             warnings.append(message)
