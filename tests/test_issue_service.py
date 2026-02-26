@@ -173,6 +173,78 @@ class _FlakyFieldPage:
         return None
 
 
+class _BusinessUnitLocator:
+    def __init__(self, page):
+        self.page = page
+
+    @property
+    def first(self):
+        return self
+
+    def filter(self, **kwargs):
+        return self
+
+    def count(self):
+        return 1 if self.page.business_unit_visible else 0
+
+
+class _ButtonRootLocator:
+    def __init__(self, page):
+        self.page = page
+
+    def filter(self, **kwargs):
+        has_text = kwargs.get("has_text")
+        if has_text is not None and "Business Unit" in str(has_text):
+            return _BusinessUnitLocator(self.page)
+        return _SuccessLocator()
+
+
+class _ChevronItemLocator:
+    def __init__(self, page):
+        self.page = page
+
+    def scroll_into_view_if_needed(self, *args, **kwargs):
+        return None
+
+    def click(self, *args, **kwargs):
+        self.page.chevron_clicks += 1
+        self.page.business_unit_visible = True
+        return None
+
+
+class _ChevronGroupLocator:
+    def __init__(self, page):
+        self.page = page
+
+    def filter(self, **kwargs):
+        return self
+
+    def count(self):
+        return 1
+
+    def nth(self, idx):
+        return _ChevronItemLocator(self.page)
+
+
+class _ChevronExpansionPage:
+    def __init__(self):
+        self.keyboard = _FakeKeyboard()
+        self.business_unit_visible = False
+        self.chevron_clicks = 0
+
+    def locator(self, selector, *args, **kwargs):
+        if selector == "button":
+            return _ButtonRootLocator(self)
+        if selector == "button[data-component='IconButton'][aria-expanded='false']":
+            return _ChevronGroupLocator(self)
+        if selector == "svg.octicon-chevron-down":
+            return _SuccessLocator()
+        return _SuccessLocator()
+
+    def wait_for_timeout(self, *args, **kwargs):
+        return None
+
+
 @unittest.skipUnless(DEPS_AVAILABLE, "issue agent dependencies are not installed in this environment")
 class IssueServiceTests(unittest.TestCase):
     def _build_service(
@@ -279,6 +351,14 @@ class IssueServiceTests(unittest.TestCase):
             svc._open_project_field_button(page, "Business Unit", timeout_ms=50)
             self.assertEqual(3, page.field_locator.attempts)
             self.assertGreaterEqual(page.keyboard.pressed.count("Escape"), 2)
+
+    def test_ensure_project_post_fields_visible_expands_with_chevron(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _ChevronExpansionPage()
+            visible = svc._ensure_project_post_fields_visible(page)
+            self.assertTrue(visible)
+            self.assertGreaterEqual(page.chevron_clicks, 1)
 
     def test_weekly_cleanup_removes_old_runs_and_old_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
