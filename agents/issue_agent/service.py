@@ -1293,6 +1293,34 @@ class IssueAgentService:
         if business_unit_btn.count() > 0:
             return True
 
+        # Front-like explicit expansion step:
+        # click project chevrons (down arrows) after Create to reveal hidden project fields.
+        chevrons = page.locator("button[data-component='IconButton'][aria-expanded='false']").filter(
+            has=page.locator("svg.octicon-chevron-down")
+        )
+        try:
+            chevron_total = min(chevrons.count(), 12)
+        except Exception:
+            chevron_total = 0
+        for idx in range(chevron_total):
+            button = chevrons.nth(idx)
+            for _ in range(2):
+                self._dismiss_open_overlays(page)
+                try:
+                    button.scroll_into_view_if_needed(timeout=2000)
+                except Exception:
+                    pass
+                try:
+                    button.click(timeout=3000)
+                except Exception:
+                    try:
+                        button.click(timeout=3000, force=True)
+                    except Exception:
+                        break
+                page.wait_for_timeout(320)
+                if business_unit_btn.count() > 0:
+                    return True
+
         candidate_groups = []
         project_name = str(self.project_name or "").strip()
         if project_name:
