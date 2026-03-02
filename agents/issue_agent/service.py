@@ -1551,10 +1551,8 @@ class IssueAgentService:
         else:
             self._debug("Skipping blockchain EVM label", is_evm=is_evm)
 
-    def _apply_issue_type(self, page, issue_type: str) -> None:
+    def _apply_issue_type(self, page, issue_type: str) -> Optional[str]:
         # Force GitHub issue type to match the requested workflow semantics.
-        self._dismiss_open_overlays(page)
-        page.locator("button").filter(has_text="Edit Type").first.click()
         mapping = {
             "bug": "Bug",
             "feature": "Feature",
@@ -1563,8 +1561,54 @@ class IssueAgentService:
         }
         resolved_type = mapping.get(str(issue_type or "").strip().lower(), "Feature")
         self._debug("Applying issue type", requested=issue_type, resolved=resolved_type)
-        self._click_option_by_text(page, resolved_type)
-        self._dismiss_open_overlays(page)
+
+        option_exact = re.compile(rf"^{re.escape(resolved_type)}$", re.I)
+        option_loose = re.compile(re.escape(resolved_type), re.I)
+        last_error: Optional[Exception] = None
+
+        for attempt in range(3):
+            try:
+                self._dismiss_open_overlays(page)
+                edit_type_button = page.locator("button").filter(has_text="Edit Type").first
+                self._click_locator_resilient(edit_type_button, timeout_ms=5000)
+                page.wait_for_timeout(250)
+            except Exception as err:
+                last_error = err
+                continue
+
+            try:
+                option = page.locator("li[role='option']").filter(has_text=option_exact).first
+                option.wait_for(state="visible", timeout=3500)
+                selected = option.get_attribute("aria-selected")
+                if selected != "true":
+                    option.click(timeout=5000)
+                self._dismiss_open_overlays(page)
+                self._debug("Issue type applied", resolved=resolved_type, attempt=attempt + 1, mode="direct")
+                return None
+            except Exception as err:
+                last_error = err
+
+            try:
+                filter_input = page.locator('input[aria-label="Choose an option"]').first
+                filter_input.wait_for(state="visible", timeout=2500)
+                filter_input.fill(resolved_type, timeout=2500)
+                page.wait_for_timeout(450)
+                option = page.locator("li[role='option']").filter(has_text=option_loose).first
+                option.wait_for(state="visible", timeout=3000)
+                selected = option.get_attribute("aria-selected")
+                if selected != "true":
+                    option.click(timeout=5000)
+                self._dismiss_open_overlays(page)
+                self._debug("Issue type applied", resolved=resolved_type, attempt=attempt + 1, mode="filtered")
+                return None
+            except Exception as err:
+                last_error = err
+                self._dismiss_open_overlays(page)
+                page.wait_for_timeout(220)
+
+        warning = f"Issue type selection failed (type={resolved_type}): {last_error}"
+        self.logger.warning("Issue flow: %s", warning)
+        return warning
 
     def _apply_management_epic_new_feature(self, page) -> None:
         self._debug("Applying management epic", epic="NEW FEATURES REQUEST")
@@ -1603,7 +1647,9 @@ class IssueAgentService:
             issue_id=str(issue.get("issue_id", "")),
         )
 
-        self._apply_issue_type(page, "feature")
+        type_warning = self._apply_issue_type(page, "feature")
+        if type_warning:
+            self._append_issue_warning(issue, type_warning)
         field_warnings = self._apply_post_creation_fields(
             page,
             unit_label=self._frontend_unit_label(str(issue.get("unit", ""))),
@@ -1638,7 +1684,9 @@ class IssueAgentService:
             issue_id=str(issue.get("issue_id", "")),
         )
 
-        self._apply_issue_type(page, issue_type)
+        type_warning = self._apply_issue_type(page, issue_type)
+        if type_warning:
+            self._append_issue_warning(issue, type_warning)
         field_warnings = self._apply_post_creation_fields(
             page,
             unit_label=self._frontend_unit_label(str(issue.get("unit", ""))),
