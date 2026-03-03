@@ -258,6 +258,10 @@ class _ChevronExpansionPage:
             return _ButtonRootLocator(self)
         if selector == "button[data-component='IconButton'][aria-expanded='false']":
             return _ChevronGroupLocator(self)
+        if selector == "button[data-component='IconButton']":
+            return _ChevronGroupLocator(self)
+        if selector == "svg.octicon-chevron-down, svg.octicon-triangle-down":
+            return _SuccessLocator()
         if selector == "svg.octicon-chevron-down":
             return _SuccessLocator()
         return _SuccessLocator()

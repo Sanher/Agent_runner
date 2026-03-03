@@ -1296,6 +1296,7 @@ class IssueAgentService:
         # GitHub project metadata can be collapsed right after create.
         # Open the chevron container before trying Status/Unit/Team/Sprint/Date.
         business_unit_btn = page.locator("button").filter(has_text=re.compile(r"Business Unit", re.I))
+        toggle_icons = page.locator("svg.octicon-chevron-down, svg.octicon-triangle-down")
 
         def _business_unit_is_visible() -> bool:
             if business_unit_btn.count() == 0:
@@ -1310,9 +1311,7 @@ class IssueAgentService:
 
         # Front-like explicit expansion step:
         # click project chevrons (down arrows) after Create to reveal hidden project fields.
-        chevrons = page.locator("button[data-component='IconButton'][aria-expanded='false']").filter(
-            has=page.locator("svg.octicon-chevron-down")
-        )
+        chevrons = page.locator("button[data-component='IconButton'][aria-expanded='false']").filter(has=toggle_icons)
         try:
             chevron_total = min(chevrons.count(), 12)
         except Exception:
@@ -1345,8 +1344,16 @@ class IssueAgentService:
                 page.locator("div,section,aside")
                 .filter(has_text=project_pattern)
                 .locator("button[data-component='IconButton'][aria-expanded='false']")
+                .filter(has=toggle_icons)
             )
-        candidate_groups.append(page.locator("button[data-component='IconButton'][aria-expanded='false']"))
+            candidate_groups.append(
+                page.locator("div,section,aside")
+                .filter(has_text=project_pattern)
+                .locator("button[data-component='IconButton']")
+                .filter(has=toggle_icons)
+            )
+        candidate_groups.append(page.locator("button[data-component='IconButton'][aria-expanded='false']").filter(has=toggle_icons))
+        candidate_groups.append(page.locator("button[data-component='IconButton']").filter(has=toggle_icons))
 
         for group in candidate_groups:
             try:
