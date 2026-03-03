@@ -783,6 +783,12 @@ class IssueAgentService:
             generated["title"] = title_text if title_text.upper().startswith("[TASK]") else f"[TASK] {title_text}"
         if repo == "backend" and issue_type in {"bug", "feature", "task", "enhancement"}:
             title_text = generated["title"].strip()
+            title_text = re.sub(
+                r"^\s*\[(?:BUG|FEATURE|TASK|ENHACEMENT|ENHANCEMENT)\]\s*",
+                "",
+                title_text,
+                flags=re.I,
+            ).strip()
             if "-" in title_text:
                 left, right = title_text.split("-", 1)
                 left_text = left.strip().upper()
@@ -1289,8 +1295,17 @@ class IssueAgentService:
     def _ensure_project_post_fields_visible(self, page) -> bool:
         # GitHub project metadata can be collapsed right after create.
         # Open the chevron container before trying Status/Unit/Team/Sprint/Date.
-        business_unit_btn = page.locator("button").filter(has_text="Business Unit")
-        if business_unit_btn.count() > 0:
+        business_unit_btn = page.locator("button").filter(has_text=re.compile(r"Business Unit", re.I))
+
+        def _business_unit_is_visible() -> bool:
+            if business_unit_btn.count() == 0:
+                return False
+            try:
+                return bool(business_unit_btn.first.is_visible())
+            except Exception:
+                return False
+
+        if _business_unit_is_visible():
             return True
 
         # Front-like explicit expansion step:
@@ -1318,7 +1333,8 @@ class IssueAgentService:
                     except Exception:
                         break
                 page.wait_for_timeout(320)
-                if business_unit_btn.count() > 0:
+                if _business_unit_is_visible():
+                    self._debug("Project post-create fields expanded via chevron")
                     return True
 
         candidate_groups = []
@@ -1351,9 +1367,10 @@ class IssueAgentService:
                     except Exception:
                         continue
                 page.wait_for_timeout(350)
-                if business_unit_btn.count() > 0:
+                if _business_unit_is_visible():
+                    self._debug("Project post-create fields expanded via fallback chevron group")
                     return True
-        return business_unit_btn.count() > 0
+        return _business_unit_is_visible()
 
     def _apply_post_creation_fields(
         self, page, unit_label: str, team_label: str = "", status_label: str = "Todo"

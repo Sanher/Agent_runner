@@ -81,8 +81,17 @@ class _FailingLocator:
     def count(self):
         return 1
 
+    def nth(self, idx):
+        return self
+
+    def locator(self, *args, **kwargs):
+        return self
+
     def get_attribute(self, *args, **kwargs):
         return "false"
+
+    def is_visible(self):
+        return False
 
 
 class _FakeKeyboard:
@@ -122,8 +131,17 @@ class _SuccessLocator:
     def count(self):
         return 1
 
+    def nth(self, idx):
+        return self
+
+    def locator(self, *args, **kwargs):
+        return self
+
     def get_attribute(self, *args, **kwargs):
         return "false"
+
+    def is_visible(self):
+        return False
 
 
 class _SuccessPage:
@@ -186,6 +204,9 @@ class _BusinessUnitLocator:
 
     def count(self):
         return 1 if self.page.business_unit_visible else 0
+
+    def is_visible(self):
+        return bool(self.page.business_unit_visible)
 
 
 class _ButtonRootLocator:
@@ -434,6 +455,30 @@ class IssueServiceTests(unittest.TestCase):
             svc._maybe_weekly_cleanup()
 
             self.assertTrue(old_run.exists())
+
+    def test_generate_issue_backend_title_strips_issue_type_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            svc._call_openai_issue_writer = lambda **kwargs: {
+                "title": "[BUG] locks, audits - inconsistency in aggregation",
+                "description": "desc",
+                "steps_to_reproduce": "steps",
+                "comment": "",
+                "close_issue": False,
+            }
+
+            draft = svc.generate_issue(
+                user_input="test",
+                issue_type="bug",
+                repo="backend",
+                unit="core",
+                include_comment=False,
+                comment_issue_number="",
+                as_new_feature=False,
+                as_third_party=False,
+            )
+
+            self.assertEqual("LOCKS, AUDITS - inconsistency in aggregation", draft["title"])
 
 
 if __name__ == "__main__":
