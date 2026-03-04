@@ -270,6 +270,135 @@ class _ChevronExpansionPage:
         return None
 
 
+class _IssueTypeKeyboard:
+    def __init__(self, page):
+        self.page = page
+        self.pressed = []
+
+    def press(self, key, *args, **kwargs):
+        key_text = str(key)
+        self.pressed.append(key_text)
+        if key_text == "ArrowDown" and self.page.arrow_reveals_menuitem:
+            self.page.menuitem_visible = True
+        return None
+
+
+class _IssueTypeEditButtonLocator:
+    def __init__(self, page):
+        self.page = page
+
+    @property
+    def first(self):
+        return self
+
+    def wait_for(self, *args, **kwargs):
+        return None
+
+    def click(self, *args, **kwargs):
+        self.page.edit_type_clicks += 1
+        return None
+
+
+class _IssueTypeTypeChipLocator:
+    def __init__(self, page):
+        self.page = page
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return 1 if self.page.type_chip_visible else 0
+
+    def is_visible(self):
+        return bool(self.page.type_chip_visible)
+
+
+class _IssueTypeOptionLocator:
+    def __init__(self, page, kind: str):
+        self.page = page
+        self.kind = kind
+
+    @property
+    def first(self):
+        return self
+
+    def filter(self, **kwargs):
+        return self
+
+    def count(self):
+        if self.kind == "input":
+            return 0 if self.page.no_filter_input else 1
+        return 1
+
+    def wait_for(self, *args, **kwargs):
+        if self.kind == "option" and not self.page.option_visible:
+            raise RuntimeError("option not visible")
+        if self.kind == "menuitem" and not self.page.menuitem_visible:
+            raise RuntimeError("menuitem not visible")
+        if self.kind == "button_option" and not self.page.button_option_visible:
+            raise RuntimeError("button option not visible")
+        if self.kind == "input" and self.page.no_filter_input:
+            raise RuntimeError("filter input not visible")
+        return None
+
+    def click(self, *args, **kwargs):
+        if self.kind in {"option", "menuitem", "button_option"}:
+            self.page.type_selected = True
+        return None
+
+    def get_attribute(self, *args, **kwargs):
+        return "true" if self.page.type_selected else "false"
+
+    def fill(self, text, *args, **kwargs):
+        self.page.last_filter_text = str(text)
+        return None
+
+
+class _IssueTypeButtonRootLocator:
+    def __init__(self, page):
+        self.page = page
+
+    def filter(self, **kwargs):
+        has_text = kwargs.get("has_text")
+        rendered = str(has_text)
+        if "Edit Type" in rendered:
+            return _IssueTypeEditButtonLocator(self.page)
+        if "Type" in rendered:
+            return _IssueTypeTypeChipLocator(self.page)
+        return _IssueTypeEditButtonLocator(self.page)
+
+
+class _IssueTypePage:
+    def __init__(self):
+        self.keyboard = _IssueTypeKeyboard(self)
+        self.edit_type_clicks = 0
+        self.type_selected = False
+        self.option_visible = False
+        self.menuitem_visible = False
+        self.button_option_visible = False
+        self.no_filter_input = True
+        self.type_chip_visible = False
+        self.arrow_reveals_menuitem = True
+        self.last_filter_text = ""
+
+    def locator(self, selector, *args, **kwargs):
+        if selector == "button":
+            return _IssueTypeButtonRootLocator(self)
+        if selector == "li[role='option']":
+            return _IssueTypeOptionLocator(self, "option")
+        if selector == "li[role='menuitem']":
+            return _IssueTypeOptionLocator(self, "menuitem")
+        if selector == "button[role='option']":
+            return _IssueTypeOptionLocator(self, "button_option")
+        if selector == 'input[aria-label="Choose an option"], input[placeholder*="Choose an option" i]':
+            return _IssueTypeOptionLocator(self, "input")
+        return _SuccessLocator()
+
+    def wait_for_timeout(self, *args, **kwargs):
+        return None
+
+
 @unittest.skipUnless(DEPS_AVAILABLE, "issue agent dependencies are not installed in this environment")
 class IssueServiceTests(unittest.TestCase):
     def _build_service(
@@ -483,6 +612,35 @@ class IssueServiceTests(unittest.TestCase):
             )
 
             self.assertEqual("LOCKS, AUDITS - inconsistency in aggregation", draft["title"])
+
+    def test_apply_issue_type_accepts_menuitem_options(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _IssueTypePage()
+            page.menuitem_visible = True
+            warning = svc._apply_issue_type(page, "feature")
+            self.assertIsNone(warning)
+            self.assertTrue(page.type_selected)
+
+    def test_apply_issue_type_handles_picker_without_filter_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _IssueTypePage()
+            page.menuitem_visible = False
+            page.no_filter_input = True
+            warning = svc._apply_issue_type(page, "feature")
+            self.assertIsNone(warning)
+            self.assertIn("ArrowDown", page.keyboard.pressed)
+            self.assertTrue(page.type_selected)
+
+    def test_apply_issue_type_treats_already_selected_as_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _IssueTypePage()
+            page.arrow_reveals_menuitem = False
+            page.type_chip_visible = True
+            warning = svc._apply_issue_type(page, "feature")
+            self.assertIsNone(warning)
 
 
 if __name__ == "__main__":

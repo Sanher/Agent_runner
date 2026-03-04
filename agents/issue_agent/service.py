@@ -1590,6 +1590,26 @@ class IssueAgentService:
         option_loose = re.compile(re.escape(resolved_type), re.I)
         last_error: Optional[Exception] = None
 
+        def _click_issue_type_option(timeout_ms: int = 4000) -> bool:
+            candidates = [
+                page.locator("li[role='option']").filter(has_text=option_exact).first,
+                page.locator("li[role='menuitem']").filter(has_text=option_exact).first,
+                page.locator("button[role='option']").filter(has_text=option_exact).first,
+                page.locator("li[role='option']").filter(has_text=option_loose).first,
+                page.locator("li[role='menuitem']").filter(has_text=option_loose).first,
+                page.locator("button[role='option']").filter(has_text=option_loose).first,
+            ]
+            for candidate in candidates:
+                try:
+                    candidate.wait_for(state="visible", timeout=timeout_ms)
+                    selected = candidate.get_attribute("aria-selected")
+                    if selected != "true":
+                        candidate.click(timeout=timeout_ms)
+                    return True
+                except Exception:
+                    continue
+            return False
+
         for attempt in range(3):
             try:
                 self._dismiss_open_overlays(page)
@@ -1601,34 +1621,48 @@ class IssueAgentService:
                 continue
 
             try:
-                option = page.locator("li[role='option']").filter(has_text=option_exact).first
-                option.wait_for(state="visible", timeout=3500)
-                selected = option.get_attribute("aria-selected")
-                if selected != "true":
-                    option.click(timeout=5000)
-                self._dismiss_open_overlays(page)
-                self._debug("Issue type applied", resolved=resolved_type, attempt=attempt + 1, mode="direct")
-                return None
+                if _click_issue_type_option(timeout_ms=4000):
+                    self._dismiss_open_overlays(page)
+                    self._debug("Issue type applied", resolved=resolved_type, attempt=attempt + 1, mode="direct")
+                    return None
             except Exception as err:
                 last_error = err
 
             try:
-                filter_input = page.locator('input[aria-label="Choose an option"]').first
-                filter_input.wait_for(state="visible", timeout=2500)
-                filter_input.fill(resolved_type, timeout=2500)
-                page.wait_for_timeout(450)
-                option = page.locator("li[role='option']").filter(has_text=option_loose).first
-                option.wait_for(state="visible", timeout=3000)
-                selected = option.get_attribute("aria-selected")
-                if selected != "true":
-                    option.click(timeout=5000)
-                self._dismiss_open_overlays(page)
-                self._debug("Issue type applied", resolved=resolved_type, attempt=attempt + 1, mode="filtered")
-                return None
+                filter_input = page.locator(
+                    'input[aria-label="Choose an option"], input[placeholder*="Choose an option" i]'
+                ).first
+                if filter_input.count() > 0:
+                    filter_input.wait_for(state="visible", timeout=2000)
+                    filter_input.fill(resolved_type, timeout=2500)
+                    page.wait_for_timeout(450)
+                    if _click_issue_type_option(timeout_ms=3500):
+                        self._dismiss_open_overlays(page)
+                        self._debug("Issue type applied", resolved=resolved_type, attempt=attempt + 1, mode="filtered")
+                        return None
+                else:
+                    # Some variants do not render a filter input in the type picker.
+                    page.keyboard.press("ArrowDown")
+                    page.wait_for_timeout(250)
+                    if _click_issue_type_option(timeout_ms=2500):
+                        self._dismiss_open_overlays(page)
+                        self._debug("Issue type applied", resolved=resolved_type, attempt=attempt + 1, mode="keyboard")
+                        return None
             except Exception as err:
                 last_error = err
-                self._dismiss_open_overlays(page)
-                page.wait_for_timeout(220)
+
+            try:
+                # If the current type chip already shows the desired value, treat as success.
+                type_chip = page.locator("button").filter(has_text=re.compile(rf"\bType\b.*\b{re.escape(resolved_type)}\b", re.I)).first
+                if type_chip.count() > 0 and type_chip.is_visible():
+                    self._dismiss_open_overlays(page)
+                    self._debug("Issue type already selected", resolved=resolved_type, attempt=attempt + 1)
+                    return None
+            except Exception:
+                pass
+
+            self._dismiss_open_overlays(page)
+            page.wait_for_timeout(220)
 
         warning = f"Issue type selection failed (type={resolved_type}): {last_error}"
         self.logger.warning("Issue flow: %s", warning)
