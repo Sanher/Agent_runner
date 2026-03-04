@@ -1313,10 +1313,12 @@ class IssueAgentService:
         # click project chevrons (down arrows) after Create to reveal hidden project fields.
         chevrons = page.locator("button[data-component='IconButton'][aria-expanded='false']").filter(has=toggle_icons)
         try:
-            chevron_total = min(chevrons.count(), 12)
+            chevron_total = min(chevrons.count(), 40)
         except Exception:
             chevron_total = 0
-        for idx in range(chevron_total):
+        # Iterate from the end first: issue sidebar project toggles are usually later
+        # in DOM than header controls and global navigation toggles.
+        for idx in range(chevron_total - 1, -1, -1):
             button = chevrons.nth(idx)
             for _ in range(2):
                 self._dismiss_open_overlays(page)
@@ -1343,12 +1345,14 @@ class IssueAgentService:
             candidate_groups.append(
                 page.locator("div,section,aside")
                 .filter(has_text=project_pattern)
+                .filter(has_text=re.compile(r"\bStatus\b", re.I))
                 .locator("button[data-component='IconButton'][aria-expanded='false']")
                 .filter(has=toggle_icons)
             )
             candidate_groups.append(
                 page.locator("div,section,aside")
                 .filter(has_text=project_pattern)
+                .filter(has_text=re.compile(r"\bStatus\b", re.I))
                 .locator("button[data-component='IconButton']")
                 .filter(has=toggle_icons)
             )
@@ -1357,10 +1361,11 @@ class IssueAgentService:
 
         for group in candidate_groups:
             try:
-                total = min(group.count(), 8)
+                total = min(group.count(), 20)
             except Exception:
                 total = 0
-            for idx in range(total):
+            # Prefer lower DOM nodes (sidebar issue fields) before top header controls.
+            for idx in range(total - 1, -1, -1):
                 button = group.nth(idx)
                 try:
                     button.scroll_into_view_if_needed(timeout=2000)
