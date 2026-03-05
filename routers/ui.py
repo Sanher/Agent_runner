@@ -1353,6 +1353,54 @@ function clearIssueDraft() {
   }, 10000);
 }
 
+let issuePlaywrightPollTimer = null;
+let issuePlaywrightPollBusy = false;
+let issuePlaywrightSeen = new Set();
+
+function stopIssuePlaywrightRealtime() {
+  if (issuePlaywrightPollTimer) {
+    clearInterval(issuePlaywrightPollTimer);
+    issuePlaywrightPollTimer = null;
+  }
+}
+
+async function pollIssuePlaywrightSteps(runId) {
+  if (!runId || issuePlaywrightPollBusy) return;
+  issuePlaywrightPollBusy = true;
+  try {
+    const r = await fetch(withIssueSecret('/events?limit=120'));
+    const data = await r.json();
+    if (!r.ok) return;
+    const items = Array.isArray(data.events) ? data.events : [];
+    // Consume only short live step events from the active run.
+    const steps = items
+      .filter((item) => String(item.event || '').trim() === 'issue_playwright_step')
+      .filter((item) => String((((item.meta || {}).run_id) || '')).trim() === runId);
+    steps.forEach((item) => {
+      const ts = String(item.ts || '').trim();
+      const msg = String((((item.meta || {}).message) || '')).trim();
+      if (!msg) return;
+      const key = `${ts}|${msg}`;
+      if (issuePlaywrightSeen.has(key)) return;
+      issuePlaywrightSeen.add(key);
+      appendIssuePlaywrightLog(msg);
+    });
+  } catch (_) {
+    // best-effort live polling; ignore transient read errors
+  } finally {
+    issuePlaywrightPollBusy = false;
+  }
+}
+
+function startIssuePlaywrightRealtime(runId) {
+  stopIssuePlaywrightRealtime();
+  issuePlaywrightSeen = new Set();
+  pollIssuePlaywrightSteps(runId);
+  issuePlaywrightPollTimer = setInterval(() => {
+    pollIssuePlaywrightSteps(runId);
+  }, 1000);
+}
+
 async function submitIssueDraft() {
   if (!currentIssue) {
     document.getElementById('issueSubmitStatus').innerText = 'Generate a draft first';
@@ -1374,6 +1422,8 @@ async function submitIssueDraft() {
   document.getElementById('issueSubmitStatus').innerText = '';
   // While Playwright is running, keep the log panel visible as live output.
   setIssueLogToggle(false, true);
+  const expectedRunId = String((currentIssue && currentIssue.issue_id) || '').trim();
+  startIssuePlaywrightRealtime(expectedRunId);
   try {
     appendIssuePlaywrightLog('Sending draft to /issue-agent/submit...');
     const r = await fetch(withIssueSecret('/submit'), {
@@ -1404,6 +1454,9 @@ async function submitIssueDraft() {
       appendIssuePlaywrightLog(`Completed with ${warnings.length} non-blocking warning(s):`);
       warnings.forEach((w) => appendIssuePlaywrightLog(`- ${String(w)}`));
     }
+    if (runId && runId !== expectedRunId) {
+      await pollIssuePlaywrightSteps(runId);
+    }
     if (createdInGithub && warnings.length === 0) {
       document.getElementById('issueSubmitStatus').innerText = `Submitted: ${finalUrl}`;
       setStatus('Todo OK: issue created and all post-create clicks succeeded');
@@ -1431,6 +1484,8 @@ async function submitIssueDraft() {
       setStatus(`Error submitting issue: ${errText}`);
     }
   } finally {
+    await pollIssuePlaywrightSteps(expectedRunId);
+    stopIssuePlaywrightRealtime();
     btn.disabled = false;
     btn.innerText = oldText;
   }

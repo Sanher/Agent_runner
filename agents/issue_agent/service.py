@@ -133,6 +133,7 @@ class IssueAgentService:
         self.status_path = self.data_dir / "issue_agent_status.json"
         self.cleanup_state_path = self.data_dir / "issue_agent_cleanup_state.json"
         self._run_lock = threading.Lock()
+        self._active_run_id = ""
 
         self._persist_status(
             {
@@ -201,6 +202,16 @@ class IssueAgentService:
         self.events_path.parent.mkdir(parents=True, exist_ok=True)
         with self.events_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+    def _playwright_step(self, message: str, **meta: Any) -> None:
+        # Short live step events consumed by the UI Playwright panel during submit.
+        run_id = str(getattr(self, "_active_run_id", "") or "").strip()
+        payload: Dict[str, Any] = {"run_id": run_id, "message": str(message or "").strip()}
+        for key, value in meta.items():
+            text = str(value or "").strip()
+            if text:
+                payload[key] = text[:120]
+        self._append_event("issue_playwright_step", **payload)
 
     # Weekly cleanup state is tracked in a small sidecar file to avoid running cleanup
     # on every request. This keeps runtime overhead low in HA while still enforcing retention.
@@ -864,6 +875,7 @@ class IssueAgentService:
         run_dir = self._artifact_dir("issue_flow", run_id)
         artifacts: Dict[str, Dict[str, str]] = {}
         page = None
+        self._active_run_id = run_id
 
         try:
             # `non_headless=True` allows manual login in the browser session.
@@ -895,9 +907,11 @@ class IssueAgentService:
                     include_comment=bool(issue.get("include_comment")),
                     target=self._sanitize_url_for_log(target_url),
                 )
+                self._playwright_step("Page loaded", repo=repo, issue_type=issue_type)
 
                 try:
                     if issue.get("include_comment") and str(issue.get("comment_issue_number", "")).strip():
+                        self._playwright_step("Flow comment")
                         self._debug(
                             "Executing comment mode flow",
                             repo=repo,
@@ -906,18 +920,23 @@ class IssueAgentService:
                         )
                         self._submit_issue_comment(page, issue)
                     elif repo == "management" and issue.get("as_third_party"):
+                        self._playwright_step("Flow management third-party")
                         self._debug("Executing management third-party flow")
                         self._submit_management_third_party_issue(page, issue)
                     elif repo == "management" and issue.get("as_new_feature"):
+                        self._playwright_step("Flow management new-feature")
                         self._debug("Executing management new-feature flow")
                         self._submit_management_feature_issue(page, issue)
                     elif repo == "frontend":
+                        self._playwright_step("Flow frontend")
                         self._debug("Executing frontend issue flow", issue_type=issue_type)
                         self._submit_frontend_issue(page, issue)
                     elif repo == "backend" and issue_type in {"bug", "feature", "task", "enhancement", "blockchain", "exchange"}:
+                        self._playwright_step("Flow backend", issue_type=issue_type)
                         self._debug("Executing backend issue flow", issue_type=issue_type)
                         self._submit_backend_issue(page, issue)
                     else:
+                        self._playwright_step("Flow generic")
                         self._debug("Executing generic selector-based issue flow")
                         self._fill_text_or_select(page, selectors["title"], issue["title"])
                         self._fill_text_or_select(page, selectors["description"], issue["description"])
@@ -1032,6 +1051,7 @@ class IssueAgentService:
             self.logger.exception("Issue submission failed via Playwright (run_id=%s)", run_id)
             raise
         finally:
+            self._active_run_id = ""
             self._run_lock.release()
 
     def _fill_text_or_select(self, page, selector: str, value: Any) -> None:
@@ -1126,7 +1146,13 @@ class IssueAgentService:
         last_error: Optional[Exception] = None
         for _ in range(3):
             attempt = _ + 1
+            self._playwright_step(f"Open {label} ({attempt}/3)")
             self._dismiss_open_overlays(page)
+            try:
+                # Re-expand project metadata if it got collapsed after previous interactions.
+                self._ensure_project_post_fields_visible(page)
+            except Exception:
+                pass
             button = page.locator("button").filter(has_text=label).first
             try:
                 button.scroll_into_view_if_needed(timeout=2000)
@@ -1136,6 +1162,7 @@ class IssueAgentService:
                 self._debug("Opening project field", field=label, attempt=attempt, forced_click="false")
                 self._click_locator_resilient(button, timeout_ms=timeout_ms)
                 page.wait_for_timeout(220)
+                self._playwright_step(f"{label} opened")
                 return
             except Exception as err:
                 self._debug("Retry opening project field", field=label, attempt=attempt, forced_click="true")
@@ -1143,6 +1170,7 @@ class IssueAgentService:
                 page.wait_for_timeout(180)
                 continue
         if last_error is not None:
+            self._playwright_step(f"{label} failed")
             raise last_error
 
     @staticmethod
@@ -1173,6 +1201,7 @@ class IssueAgentService:
             issue_type,
             issue_id,
         )
+        self._playwright_step("Click Create", repo=repo, issue_type=issue_type)
         try:
             create_button.click(timeout=10000)
         except Exception:
@@ -1186,6 +1215,7 @@ class IssueAgentService:
                 created = True
                 break
             except Exception:
+                self._playwright_step("Retry create", key=shortcut)
                 try:
                     page.keyboard.press(shortcut)
                 except Exception:
@@ -1205,6 +1235,7 @@ class IssueAgentService:
             issue_type,
             self._sanitize_url_for_log(page.url),
         )
+        self._playwright_step("Create done", url=self._sanitize_url_for_log(page.url))
         if not created:
             raise RuntimeError(
                 f"Create did not navigate to created issue (repo={repo}, issue_type={issue_type}, url={page.url})"
@@ -1309,39 +1340,38 @@ class IssueAgentService:
         if _business_unit_is_visible():
             return True
 
-        # Front-like explicit expansion step:
-        # click project chevrons (down arrows) after Create to reveal hidden project fields.
-        chevrons = page.locator("button[data-component='IconButton'][aria-expanded='false']").filter(has=toggle_icons)
-        try:
-            chevron_total = min(chevrons.count(), 40)
-        except Exception:
-            chevron_total = 0
-        # Iterate from the end first: issue sidebar project toggles are usually later
-        # in DOM than header controls and global navigation toggles.
-        for idx in range(chevron_total - 1, -1, -1):
-            button = chevrons.nth(idx)
-            for _ in range(2):
-                self._dismiss_open_overlays(page)
-                try:
-                    button.scroll_into_view_if_needed(timeout=2000)
-                except Exception:
-                    pass
-                try:
-                    button.click(timeout=3000)
-                except Exception:
-                    try:
-                        button.click(timeout=3000, force=True)
-                    except Exception:
-                        break
-                page.wait_for_timeout(320)
-                if _business_unit_is_visible():
-                    self._debug("Project post-create fields expanded via chevron")
-                    return True
-
         candidate_groups = []
         project_name = str(self.project_name or "").strip()
         if project_name:
             project_pattern = re.compile(rf"\b{re.escape(project_name)}\b", re.I)
+            projects_section = (
+                page.locator("div,section,aside")
+                .filter(has_text=re.compile(r"\bProjects\b", re.I))
+                .filter(has_text=project_pattern)
+            )
+            candidate_groups.append(
+                projects_section
+                .locator("button[data-component='IconButton'][aria-expanded='false']")
+                .filter(has=toggle_icons)
+            )
+            candidate_groups.append(
+                projects_section.locator("button[data-component='IconButton']").filter(has=toggle_icons)
+            )
+            # Focus first on the project status row itself (most stable anchor after issue creation).
+            candidate_groups.append(
+                page.locator(
+                    "xpath=//span[normalize-space()='Status']/ancestor::*[self::div or self::section or self::aside][1]"
+                )
+                .locator("button[data-component='IconButton'][aria-expanded='false']")
+                .filter(has=toggle_icons)
+            )
+            candidate_groups.append(
+                page.locator(
+                    "xpath=//span[normalize-space()='Status']/ancestor::*[self::div or self::section or self::aside][1]"
+                )
+                .locator("button[data-component='IconButton']")
+                .filter(has=toggle_icons)
+            )
             candidate_groups.append(
                 page.locator("div,section,aside")
                 .filter(has_text=project_pattern)
@@ -1355,6 +1385,15 @@ class IssueAgentService:
                 .filter(has_text=re.compile(r"\bStatus\b", re.I))
                 .locator("button[data-component='IconButton']")
                 .filter(has=toggle_icons)
+            )
+        else:
+            # Front-like explicit expansion step as fallback when project name is unavailable.
+            # Click project chevrons (down arrows) after Create to reveal hidden project fields.
+            candidate_groups.append(
+                page.locator("button[data-component='IconButton'][aria-expanded='false']").filter(has=toggle_icons)
+            )
+            candidate_groups.append(
+                page.locator("button[data-component='IconButton']").filter(has=toggle_icons)
             )
         candidate_groups.append(page.locator("button[data-component='IconButton'][aria-expanded='false']").filter(has=toggle_icons))
         candidate_groups.append(page.locator("button[data-component='IconButton']").filter(has=toggle_icons))
@@ -1389,6 +1428,7 @@ class IssueAgentService:
     ) -> List[str]:
         # Shared post-create metadata flow used across frontend/backend/management issue variants.
         self._debug("Applying post-create fields", status=status_label, unit=unit_label, team=team_label or "-")
+        self._playwright_step("Post-create start")
         warnings: List[str] = []
         field_results: Dict[str, bool] = {
             "status": False,
@@ -1404,6 +1444,7 @@ class IssueAgentService:
         status_error: Optional[Exception] = None
         for attempt in range(3):
             try:
+                self._playwright_step(f"Set status ({attempt + 1}/3)", status=status_label)
                 if attempt == 0:
                     self._ensure_project_post_fields_visible(page)
                     page.wait_for_timeout(500)
@@ -1427,6 +1468,7 @@ class IssueAgentService:
                         raise
                 status_error = None
                 field_results["status"] = True
+                self._playwright_step("Status ok", status=status_label)
                 self._dismiss_open_overlays(page)
                 break
             except Exception as err:
@@ -1441,45 +1483,55 @@ class IssueAgentService:
         self._dismiss_open_overlays(page)
 
         try:
+            self._playwright_step("Set business unit", unit=unit_label)
             self._open_project_field_button(page, "Business Unit", timeout_ms=5000)
             self._click_option_by_text(page, unit_label)
             field_results["business_unit"] = True
+            self._playwright_step("Business unit ok", unit=unit_label)
             self._dismiss_open_overlays(page)
         except Exception as err:
             message = f"Post-create business unit failed (unit={unit_label}): {err}"
             warnings.append(message)
             self.logger.warning("Issue flow: %s", message)
+            self._playwright_step("Business unit failed", unit=unit_label)
             self._dismiss_open_overlays(page)
 
         if team_label:
             try:
                 page.wait_for_timeout(300)
+                self._playwright_step("Set team", team=team_label)
                 self._open_project_field_button(page, "Team", timeout_ms=5000)
                 self._click_option_by_text(page, team_label)
                 field_results["team"] = True
+                self._playwright_step("Team ok", team=team_label)
                 self._dismiss_open_overlays(page)
             except Exception as err:
                 message = f"Post-create team failed (team={team_label}): {err}"
                 warnings.append(message)
                 self.logger.warning("Issue flow: %s", message)
+                self._playwright_step("Team failed", team=team_label)
                 self._dismiss_open_overlays(page)
 
         try:
             page.wait_for_timeout(300)
+            self._playwright_step("Set sprint", sprint="Current")
             self._open_project_field_button(page, "Sprint", timeout_ms=5000)
             current_option = page.locator("li[role='option']").filter(has_text="Current").first
             current_option.wait_for(state="visible", timeout=5000)
             current_option.click(timeout=5000)
             field_results["sprint"] = True
+            self._playwright_step("Sprint ok", sprint="Current")
             self._dismiss_open_overlays(page)
         except Exception as err:
             message = f"Post-create sprint failed (Current): {err}"
             warnings.append(message)
             self.logger.warning("Issue flow: %s", message)
+            self._playwright_step("Sprint failed", sprint="Current")
             self._dismiss_open_overlays(page)
 
         try:
             page.wait_for_timeout(300)
+            self._playwright_step("Set creation date", date="Today")
             self._open_project_field_button(page, "Creation Date", timeout_ms=5000)
             target_date = datetime.now().strftime("%m/%d/%Y")
             day_cell = page.locator(f'div[role="gridcell"][data-date="{target_date}"]').first
@@ -1488,11 +1540,13 @@ class IssueAgentService:
             else:
                 page.locator('div[role="gridcell"][aria-selected="true"]').first.click(timeout=5000)
             field_results["creation_date"] = True
+            self._playwright_step("Creation date ok", date=target_date)
             self._dismiss_open_overlays(page)
         except Exception as err:
             message = f"Post-create creation date failed: {err}"
             warnings.append(message)
             self.logger.warning("Issue flow: %s", message)
+            self._playwright_step("Creation date failed", date="Today")
             self._dismiss_open_overlays(page)
 
         if project_fields_collapsed_initially:

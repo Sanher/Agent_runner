@@ -270,6 +270,132 @@ class _ChevronExpansionPage:
         return None
 
 
+class _ProjectFieldsVisibilityLocator:
+    def __init__(self, page):
+        self.page = page
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return 1 if self.page.business_unit_visible else 0
+
+    def is_visible(self):
+        return bool(self.page.business_unit_visible)
+
+
+class _ProjectButtonRootLocator:
+    def __init__(self, page):
+        self.page = page
+
+    def filter(self, **kwargs):
+        has_text = kwargs.get("has_text")
+        rendered = str(has_text or "")
+        if "Business Unit" in rendered:
+            return _ProjectFieldsVisibilityLocator(self.page)
+        return _SuccessLocator()
+
+
+class _ProjectToggleItemLocator:
+    def __init__(self, page, group_id: str):
+        self.page = page
+        self.group_id = group_id
+
+    def scroll_into_view_if_needed(self, *args, **kwargs):
+        return None
+
+    def click(self, *args, **kwargs):
+        self.page.click_log.append(self.group_id)
+        if self.group_id in self.page.expand_on_groups:
+            self.page.business_unit_visible = True
+        return None
+
+
+class _ProjectToggleGroupLocator:
+    def __init__(self, page, group_id: str):
+        self.page = page
+        self.group_id = group_id
+
+    def filter(self, **kwargs):
+        return self
+
+    def count(self):
+        return int(self.page.group_counts.get(self.group_id, 0))
+
+    def nth(self, idx):
+        return _ProjectToggleItemLocator(self.page, self.group_id)
+
+
+class _ProjectSectionLocator:
+    def __init__(self, page, kind: str):
+        self.page = page
+        self.kind = kind
+
+    def filter(self, **kwargs):
+        has_text = str(kwargs.get("has_text") or "")
+        lowered = has_text.lower()
+        if "projects" in lowered and self.kind == "root":
+            return _ProjectSectionLocator(self.page, "projects")
+        if "sampleproject" in lowered and self.kind in {"root", "projects"}:
+            return _ProjectSectionLocator(self.page, "projects_and_name")
+        if "status" in lowered and self.kind in {"root", "projects_and_name"}:
+            return _ProjectSectionLocator(self.page, "project_status")
+        return self
+
+    def locator(self, selector, *args, **kwargs):
+        if self.kind == "projects_and_name":
+            if selector == "button[data-component='IconButton'][aria-expanded='false']":
+                return _ProjectToggleGroupLocator(self.page, "projects_collapsed")
+            if selector == "button[data-component='IconButton']":
+                return _ProjectToggleGroupLocator(self.page, "projects_any")
+        if self.kind == "project_status":
+            if selector == "button[data-component='IconButton'][aria-expanded='false']":
+                return _ProjectToggleGroupLocator(self.page, "project_status_collapsed")
+            if selector == "button[data-component='IconButton']":
+                return _ProjectToggleGroupLocator(self.page, "project_status_any")
+        return _ProjectToggleGroupLocator(self.page, "none")
+
+
+class _ProjectStatusXPathLocator:
+    def __init__(self, page):
+        self.page = page
+
+    def locator(self, selector, *args, **kwargs):
+        if selector == "button[data-component='IconButton'][aria-expanded='false']":
+            return _ProjectToggleGroupLocator(self.page, "xpath_status_collapsed")
+        if selector == "button[data-component='IconButton']":
+            return _ProjectToggleGroupLocator(self.page, "xpath_status_any")
+        return _ProjectToggleGroupLocator(self.page, "none")
+
+
+class _ProjectExpansionPriorityPage:
+    def __init__(self, *, group_counts=None, expand_on_groups=None):
+        self.keyboard = _FakeKeyboard()
+        self.business_unit_visible = False
+        self.group_counts = group_counts or {}
+        self.expand_on_groups = set(expand_on_groups or [])
+        self.click_log = []
+
+    def locator(self, selector, *args, **kwargs):
+        if selector == "button":
+            return _ProjectButtonRootLocator(self)
+        if selector == "svg.octicon-chevron-down, svg.octicon-triangle-down":
+            return _SuccessLocator()
+        if selector == "div,section,aside":
+            return _ProjectSectionLocator(self, "root")
+        if selector == "xpath=//span[normalize-space()='Status']/ancestor::*[self::div or self::section or self::aside][1]":
+            return _ProjectStatusXPathLocator(self)
+        if selector == "button[data-component='IconButton'][aria-expanded='false']":
+            return _ProjectToggleGroupLocator(self, "global_collapsed")
+        if selector == "button[data-component='IconButton']":
+            return _ProjectToggleGroupLocator(self, "global_any")
+        return _SuccessLocator()
+
+    def wait_for_timeout(self, *args, **kwargs):
+        return None
+
+
 class _IssueTypeKeyboard:
     def __init__(self, page):
         self.page = page
@@ -513,6 +639,41 @@ class IssueServiceTests(unittest.TestCase):
             visible = svc._ensure_project_post_fields_visible(page)
             self.assertTrue(visible)
             self.assertGreaterEqual(page.chevron_clicks, 1)
+
+    def test_ensure_project_post_fields_visible_prioritizes_project_container_before_global(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _ProjectExpansionPriorityPage(
+                group_counts={
+                    "projects_collapsed": 1,
+                    "global_collapsed": 1,
+                    "global_any": 1,
+                },
+                expand_on_groups={"projects_collapsed"},
+            )
+            visible = svc._ensure_project_post_fields_visible(page)
+            self.assertTrue(visible)
+            self.assertIn("projects_collapsed", page.click_log)
+            self.assertNotIn("global_collapsed", page.click_log)
+
+    def test_ensure_project_post_fields_visible_uses_global_fallback_when_context_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _ProjectExpansionPriorityPage(
+                group_counts={
+                    "projects_collapsed": 0,
+                    "projects_any": 0,
+                    "project_status_collapsed": 0,
+                    "project_status_any": 0,
+                    "xpath_status_collapsed": 0,
+                    "xpath_status_any": 0,
+                    "global_collapsed": 1,
+                },
+                expand_on_groups={"global_collapsed"},
+            )
+            visible = svc._ensure_project_post_fields_visible(page)
+            self.assertTrue(visible)
+            self.assertIn("global_collapsed", page.click_log)
 
     def test_weekly_cleanup_removes_old_runs_and_old_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
