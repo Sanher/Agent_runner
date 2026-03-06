@@ -1398,7 +1398,51 @@ function startIssuePlaywrightRealtime(runId) {
   pollIssuePlaywrightSteps(runId);
   issuePlaywrightPollTimer = setInterval(() => {
     pollIssuePlaywrightSteps(runId);
-  }, 1000);
+  }, 1500);
+}
+
+function extractIssueUrlFromRunEvents(items, runId) {
+  if (!Array.isArray(items) || !runId) return '';
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i] || {};
+    if (String(item.event || '').trim() !== 'issue_playwright_step') continue;
+    const meta = item.meta || {};
+    if (String(meta.run_id || '').trim() !== runId) continue;
+    const url = String(meta.url || '').trim();
+    if (url && url.includes('/issues/') && /[0-9]+([?#].*)?$/.test(url)) return url;
+  }
+  return '';
+}
+
+async function reconcileIssueSubmitByRunId(runId, attempts = 8, waitMs = 1500) {
+  if (!runId) return {state: 'unknown', finalUrl: ''};
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const r = await fetch(withIssueSecret('/events?limit=300'));
+      const data = await r.json();
+      if (r.ok) {
+        const items = Array.isArray(data.events) ? data.events : [];
+        const submitted = items.some((item) => {
+          const meta = (item && item.meta) || {};
+          return String(item.event || '').trim() === 'issue_submitted'
+            && String(meta.run_id || '').trim() === runId;
+        });
+        if (submitted) {
+          return {state: 'submitted', finalUrl: extractIssueUrlFromRunEvents(items, runId)};
+        }
+        const failed = items.some((item) => {
+          const meta = (item && item.meta) || {};
+          return String(item.event || '').trim() === 'issue_submit_failed'
+            && String(meta.run_id || '').trim() === runId;
+        });
+        if (failed) return {state: 'failed', finalUrl: ''};
+      }
+    } catch (_) {
+      // best effort
+    }
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+  return {state: 'unknown', finalUrl: ''};
 }
 
 async function submitIssueDraft() {
@@ -1474,14 +1518,36 @@ async function submitIssueDraft() {
   } catch (err) {
     const errText = String(err || '');
     appendIssuePlaywrightLog(`Playwright execution failed: ${errText}`);
-    document.getElementById('issueSubmitStatus').innerText = `Error submitting draft: ${errText}`;
-    setIssueLogToggle(true, true);
-    if (/Create did not navigate to created issue/i.test(errText)) {
-      setStatus('Error: issue was not created by Create. Check Playwright log.');
-    } else if (/load failed/i.test(errText)) {
-      setStatus('Warning: request connection failed while processing. Check Playwright log and addon logs.');
-    } else {
+    appendIssuePlaywrightLog('Checking backend run status...');
+    const reconcile = await reconcileIssueSubmitByRunId(expectedRunId);
+    if (reconcile.state === 'submitted') {
+      const recoveredUrl = String(reconcile.finalUrl || '').trim();
+      appendIssuePlaywrightLog('Recovered: backend completed the issue submit.');
+      if (recoveredUrl) {
+        currentIssue.generated_link = recoveredUrl;
+        appendIssuePlaywrightLog(`Issue created/updated at: ${recoveredUrl}`);
+        document.getElementById('issueSubmitStatus').innerText = `Submitted (recovered): ${recoveredUrl}`;
+      } else {
+        document.getElementById('issueSubmitStatus').innerText = `Submitted (recovered): run ${expectedRunId}`;
+      }
+      setStatus('Warning: UI request failed, but backend completed the issue submission.');
+      setIssueLogToggle(true, false);
+      renderIssueDraftEditor();
+    } else if (reconcile.state === 'failed') {
+      appendIssuePlaywrightLog('Backend confirms submit failed for this run.');
+      document.getElementById('issueSubmitStatus').innerText = `Error submitting draft: ${errText}`;
+      setIssueLogToggle(true, true);
       setStatus(`Error submitting issue: ${errText}`);
+    } else {
+      document.getElementById('issueSubmitStatus').innerText = `Error submitting draft: ${errText}`;
+      setIssueLogToggle(true, true);
+      if (/Create did not navigate to created issue/i.test(errText)) {
+        setStatus('Error: issue was not created by Create. Check Playwright log.');
+      } else if (/load failed/i.test(errText)) {
+        setStatus('Warning: request connection failed while processing. Check Playwright log and addon logs.');
+      } else {
+        setStatus(`Error submitting issue: ${errText}`);
+      }
     }
   } finally {
     await pollIssuePlaywrightSteps(expectedRunId);
