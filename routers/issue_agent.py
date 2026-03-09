@@ -68,9 +68,9 @@ def create_issue_router(
         return service.get_status()
 
     @router.get("/events")
-    def events(request: Request, limit: int = 200):
+    def events(request: Request, limit: int = 200, run_id: str = "", event: str = ""):
         ensure_auth(request)
-        return service.get_events(limit=limit)
+        return service.get_events(limit=limit, run_id=run_id, event=event)
 
     @router.post("/generate")
     def generate(req: GenerateIssueRequest, request: Request):
@@ -205,6 +205,21 @@ def create_issue_router(
             return service.send_webhook_report(reason=req.reason, details=req.details)
         except Exception as err:
             logger.exception("Failure in /issue-agent/report")
+            raise HTTPException(status_code=500, detail=str(err)) from err
+
+    @router.post("/resolve/{run_id}")
+    def resolve_run(run_id: str, request: Request):
+        ensure_auth(request)
+        run_id_text = str(run_id or "").strip()
+        if not run_id_text:
+            raise HTTPException(status_code=400, detail="Missing run_id")
+        try:
+            # This endpoint only marks the run as reviewed; it does not alter the issue itself.
+            result = service.mark_run_resolved(run_id_text)
+            logger.info("Issue run marked resolved (run_id=%s)", run_id_text)
+            return result
+        except Exception as err:
+            logger.exception("Failure in /issue-agent/resolve")
             raise HTTPException(status_code=500, detail=str(err)) from err
 
     return router

@@ -1730,14 +1730,17 @@ class IssueAgentService:
     def _apply_management_epic_new_feature(self, page) -> None:
         self._debug("Applying management epic", epic="NEW FEATURES REQUEST")
         try:
+            self._playwright_step("Set epic", epic="NEW FEATURES REQUEST")
             self._dismiss_open_overlays(page)
             self._open_project_field_button(page, "Epic", timeout_ms=5000)
             epic_search = page.locator('input[aria-label="Choose an option"]').first
             epic_search.fill("NEW FEATURE")
             page.wait_for_timeout(1200)
             self._click_option_by_text(page, "NEW FEATURES REQUEST")
+            self._playwright_step("Epic ok", epic="NEW FEATURES REQUEST")
             self._dismiss_open_overlays(page)
         except Exception as err:
+            self._playwright_step("Epic failed", epic="NEW FEATURES REQUEST")
             self.logger.warning("Issue flow: failed to set epic 'NEW FEATURES REQUEST': %s", err)
             self._dismiss_open_overlays(page)
 
@@ -1959,6 +1962,12 @@ class IssueAgentService:
             issue_id=str(issue.get("issue_id", "")),
         )
 
+        if issue_type == "task":
+            # Task reuses the enhancement template, so the issue type must be corrected after create.
+            type_warning = self._apply_issue_type(page, "task")
+            if type_warning:
+                self._append_issue_warning(issue, type_warning)
+
         field_warnings = self._apply_post_creation_fields(
             page,
             unit_label=self._frontend_unit_label(str(issue.get("unit", ""))),
@@ -1990,14 +1999,29 @@ class IssueAgentService:
         self.logger.info("Issue-agent webhook sent (reason=%s)", reason)
         return {"ok": True, "sent": True}
 
-    def get_events(self, limit: int = 200) -> Dict[str, Any]:
+    def mark_run_resolved(self, run_id: str) -> Dict[str, Any]:
+        run_id_text = str(run_id or "").strip()
+        if not run_id_text:
+            return {"ok": False, "reason": "missing run_id"}
+        # Keep the operator acknowledgement in the same event stream as the run.
+        self._append_event("issue_run_resolved", run_id=run_id_text)
+        return {"ok": True, "run_id": run_id_text}
+
+    def get_events(self, limit: int = 200, run_id: str = "", event: str = "") -> Dict[str, Any]:
         if not self.events_path.exists():
             return {"events": []}
+        run_id_text = str(run_id or "").strip()
+        event_text = str(event or "").strip()
         lines = self.events_path.read_text(encoding="utf-8").splitlines()
         items: List[Dict[str, Any]] = []
         for line in lines[-max(1, min(limit, 2000)) :]:
             try:
-                items.append(json.loads(line))
+                payload = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if event_text and str(payload.get("event", "")).strip() != event_text:
+                continue
+            if run_id_text and str((payload.get("meta", {}) or {}).get("run_id", "")).strip() != run_id_text:
+                continue
+            items.append(payload)
         return {"events": items}

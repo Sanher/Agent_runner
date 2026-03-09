@@ -15,6 +15,7 @@ class _FakeIssueService:
     def __init__(self) -> None:
         self.last_generate_call = None
         self.last_submit_call = None
+        self.last_resolved_run_id = None
 
     def generate_issue(
         self,
@@ -58,8 +59,12 @@ class _FakeIssueService:
     def get_status(self):
         return {"ok": True}
 
-    def get_events(self, limit=200):
+    def get_events(self, limit=200, run_id="", event=""):
         return {"events": []}
+
+    def mark_run_resolved(self, run_id):
+        self.last_resolved_run_id = run_id
+        return {"ok": True, "run_id": run_id}
 
 
 @unittest.skipUnless(DEPS_AVAILABLE, "fastapi no está instalado en este entorno")
@@ -200,6 +205,12 @@ class IssueRouterMappingTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("Missing selector", response.json().get("detail", ""))
+
+    def test_resolve_run_marks_run_as_resolved(self) -> None:
+        client, service = self._build_client()
+        response = client.post("/issue-agent/resolve/issue-20260309-144724?secret=top-secret")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual("issue-20260309-144724", service.last_resolved_run_id)
 
 
 if __name__ == "__main__":

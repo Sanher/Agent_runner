@@ -155,6 +155,19 @@ class _SuccessPage:
         return None
 
 
+class _FrontendSubmitLocator(_SuccessLocator):
+    def fill(self, *args, **kwargs):
+        return None
+
+
+class _FrontendSubmitPage:
+    def locator(self, *args, **kwargs):
+        return _FrontendSubmitLocator()
+
+    def wait_for_timeout(self, *args, **kwargs):
+        return None
+
+
 class _FlakyFieldLocator:
     def __init__(self):
         self.attempts = 0
@@ -750,6 +763,58 @@ class IssueServiceTests(unittest.TestCase):
 
             self.assertTrue(old_run.exists())
 
+    def test_get_events_filters_by_run_id_and_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            svc.events_path.parent.mkdir(parents=True, exist_ok=True)
+            svc.events_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "ts": "2026-03-09T15:01:27",
+                                "event": "issue_playwright_step",
+                                "meta": {"run_id": "run-a", "message": "Page loaded"},
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "ts": "2026-03-09T15:01:28",
+                                "event": "issue_submitted",
+                                "meta": {"run_id": "run-a"},
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "ts": "2026-03-09T15:01:29",
+                                "event": "issue_playwright_step",
+                                "meta": {"run_id": "run-b", "message": "Page loaded"},
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            payload = svc.get_events(limit=20, run_id="run-a", event="issue_playwright_step")
+
+            self.assertEqual(1, len(payload["events"]))
+            self.assertEqual("run-a", payload["events"][0]["meta"]["run_id"])
+            self.assertEqual("issue_playwright_step", payload["events"][0]["event"])
+
+    def test_mark_run_resolved_appends_historical_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+
+            result = svc.mark_run_resolved("issue-20260309-144724")
+            payload = svc.get_events(limit=20, run_id="issue-20260309-144724")
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(1, len(payload["events"]))
+            self.assertEqual("issue_run_resolved", payload["events"][0]["event"])
+            self.assertEqual("issue-20260309-144724", payload["events"][0]["meta"]["run_id"])
+
     def test_generate_issue_backend_title_strips_issue_type_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             svc = self._build_service(Path(tmp))
@@ -802,6 +867,33 @@ class IssueServiceTests(unittest.TestCase):
             page.type_chip_visible = True
             warning = svc._apply_issue_type(page, "feature")
             self.assertIsNone(warning)
+
+    def test_submit_frontend_task_corrects_issue_type_after_create(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _FrontendSubmitPage()
+            applied_types: list[str] = []
+
+            svc._open_projects_editor = lambda _page: None
+            svc._ensure_project_selected = lambda _page: None
+            svc._click_create_and_wait_created = lambda *args, **kwargs: None
+            svc._apply_post_creation_fields = lambda *args, **kwargs: []
+            svc._apply_issue_type = lambda _page, issue_type: applied_types.append(issue_type) or None
+
+            svc._submit_frontend_issue(
+                page,
+                {
+                    "issue_id": "issue-1",
+                    "repo": "frontend",
+                    "issue_type": "task",
+                    "title": "Review websocket failures",
+                    "description": "desc",
+                    "steps_to_reproduce": "",
+                    "unit": "customer",
+                },
+            )
+
+            self.assertEqual(["task"], applied_types)
 
 
 if __name__ == "__main__":

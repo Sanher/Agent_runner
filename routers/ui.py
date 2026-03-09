@@ -642,6 +642,17 @@ def create_ui_router(job_secret: str) -> APIRouter:
       </div>
       <button onclick=\"generateIssueDraft()\" id=\"issueGenerateBtn\">Generate draft</button>
       <div id=\"issueGenerateStatus\" class=\"muted\"></div>
+      <div id=\"issueRunTools\" style=\"margin-top:12px;\">
+        <label class=\"muted\">Run ID / historical log</label>
+        <input id=\"issueRunId\" class=\"field\" placeholder=\"issue-YYYYMMDD-HHMMSS\" oninput=\"updateIssueRunControls()\">
+        <div id=\"issueRunResolvedState\" class=\"muted\">Run status: no active run</div>
+        <select id=\"issueRecentRunsList\" class=\"field\" onchange=\"selectIssueRecentRun()\">
+          <option value=\"\">Recent runs will appear here</option>
+        </select>
+        <button onclick=\"listIssueRecentRuns()\" id=\"issueListRunsBtn\">List recent runs</button>
+        <button onclick=\"loadIssueHistoryLog()\" id=\"issueLoadHistoryBtn\">View historical log</button>
+        <button onclick=\"markIssueRunResolved()\" id=\"issueMarkResolvedBtn\" disabled>Mark resolved</button>
+      </div>
       <div id=\"issueDraftRuntimeGrid\" class=\"issue-runtime-grid\" style=\"display:none;\">
         <div id=\"issueDraftEditor\" style=\"display:none;\">
           <label class=\"muted\">Draft title (editable)</label>
@@ -737,6 +748,9 @@ let emailReviewedVisible = false;
 let statusDismissTimer = null;
 let issuePlaywrightLogLines = [];
 let issueLogToggleAllowed = false;
+let issueCurrentRunId = '';
+let issueResolvedRunIds = new Set();
+let issueRecentRuns = [];
 let emailSettingsCache = {
   default_from_email: '',
   default_cc_email: ''
@@ -1239,6 +1253,63 @@ function clearIssuePlaywrightLog(hidePanel = false) {
   if (hidePanel) issueLogToggleAllowed = false;
 }
 
+function getIssueSelectedRunId() {
+  const input = document.getElementById('issueRunId');
+  const typed = String((input && input.value) || '').trim();
+  return typed || issueCurrentRunId;
+}
+
+function setIssueCurrentRunId(runId) {
+  issueCurrentRunId = String(runId || '').trim();
+  const input = document.getElementById('issueRunId');
+  if (input && issueCurrentRunId) input.value = issueCurrentRunId;
+  updateIssueRunControls();
+}
+
+function updateIssueRunControls() {
+  const input = document.getElementById('issueRunId');
+  const state = document.getElementById('issueRunResolvedState');
+  const markBtn = document.getElementById('issueMarkResolvedBtn');
+  const selectedRunId = String((input && input.value) || '').trim() || issueCurrentRunId;
+  const isResolved = !!selectedRunId && issueResolvedRunIds.has(selectedRunId);
+  if (state) {
+    state.innerText = selectedRunId
+      ? `Run status: ${isResolved ? 'resolved' : 'pending review'}`
+      : 'Run status: no active run';
+  }
+  if (markBtn) {
+    markBtn.disabled = !selectedRunId || isResolved;
+  }
+}
+
+function issueRunStatusLabel(runId) {
+  if (!runId) return '';
+  return issueResolvedRunIds.has(runId) ? 'resolved' : 'pending';
+}
+
+function renderIssueRecentRunsList() {
+  const select = document.getElementById('issueRecentRunsList');
+  if (!select) return;
+  const options = ['<option value=\"\">Recent runs will appear here</option>'];
+  issueRecentRuns.forEach((item) => {
+    const runId = String((item && item.run_id) || '').trim();
+    if (!runId) return;
+    const status = String((item && item.status) || '').trim();
+    const selected = runId === getIssueSelectedRunId() ? ' selected' : '';
+    options.push(`<option value=\"${runId}\"${selected}>${runId}${status ? ` (${status})` : ''}</option>`);
+  });
+  select.innerHTML = options.join('');
+}
+
+function selectIssueRecentRun() {
+  const select = document.getElementById('issueRecentRunsList');
+  const input = document.getElementById('issueRunId');
+  const runId = String((select && select.value) || '').trim();
+  if (input) input.value = runId;
+  if (runId) setIssueCurrentRunId(runId);
+  updateIssueRunControls();
+}
+
 function appendIssuePlaywrightLog(message) {
   // Keep a bounded rolling buffer to avoid unbounded growth in long sessions.
   const logBox = document.getElementById('issuePlaywrightLog');
@@ -1298,6 +1369,7 @@ function renderIssueDraftEditor() {
       jsonBox.style.display = 'none';
       jsonBox.innerText = '{}';
     }
+    updateIssueRunControls();
     return;
   }
   const title = document.getElementById('issueDraftTitle');
@@ -1317,6 +1389,7 @@ function renderIssueDraftEditor() {
     jsonBox.style.display = 'block';
     jsonBox.innerText = JSON.stringify(currentIssue || {}, null, 2);
   }
+  updateIssueRunControls();
 }
 
 function syncIssueDraftFromEditor() {
@@ -1353,6 +1426,141 @@ function clearIssueDraft() {
   }, 10000);
 }
 
+function formatIssueHistoryEvent(item) {
+  const eventName = String((item && item.event) || '').trim();
+  const meta = (item && item.meta) || {};
+  const ts = String((item && item.ts) || '').trim();
+  const prefix = ts ? `[${ts}] ` : '';
+  if (eventName === 'issue_playwright_step') {
+    const message = String(meta.message || '').trim();
+    return message ? `${prefix}${message}` : '';
+  }
+  if (eventName === 'issue_submitted') {
+    const finalUrl = String(meta.final_url || '').trim();
+    return finalUrl ? `${prefix}Submitted: ${finalUrl}` : `${prefix}Submitted`;
+  }
+  if (eventName === 'issue_submit_failed') {
+    const reason = String(meta.reason || '').trim();
+    return reason ? `${prefix}Submit failed: ${reason}` : `${prefix}Submit failed`;
+  }
+  if (eventName === 'issue_run_resolved') {
+    return `${prefix}Marked resolved`;
+  }
+  return '';
+}
+
+async function loadIssueHistoryLog() {
+  const runId = getIssueSelectedRunId();
+  if (!runId) {
+    setStatus('Provide a run ID first');
+    return;
+  }
+  // Historical view replays the persisted backend events for one concrete run_id.
+  const statusBox = document.getElementById('issueSubmitStatus');
+  stopIssuePlaywrightRealtime();
+  clearIssuePlaywrightLog(false);
+  setIssueLogToggle(true, true);
+  appendIssuePlaywrightLog(`Loading historical log for ${runId}...`);
+  try {
+    const r = await fetch(withIssueSecret(`/events?limit=200&run_id=${encodeURIComponent(runId)}`));
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    const items = Array.isArray(data.events) ? data.events : [];
+    const lines = items.map(formatIssueHistoryEvent).filter(Boolean);
+    const isResolved = items.some((item) => String((item && item.event) || '').trim() === 'issue_run_resolved');
+    if (isResolved) issueResolvedRunIds.add(runId);
+    issuePlaywrightLogLines = lines.length ? lines : [`No stored events found for ${runId}.`];
+    const logBox = document.getElementById('issuePlaywrightLog');
+    const logWrap = document.getElementById('issuePlaywrightLogWrap');
+    if (logWrap) logWrap.style.display = 'block';
+    if (logBox) {
+      logBox.innerText = issuePlaywrightLogLines.join('\\n');
+      logBox.scrollTop = 0;
+    }
+    setIssueCurrentRunId(runId);
+    if (statusBox) statusBox.innerText = `Historical log loaded: ${runId}`;
+    setStatus(`Historical Playwright log loaded: ${runId}`);
+  } catch (err) {
+    appendIssuePlaywrightLog(`Historical log failed: ${String(err || '')}`);
+    setIssueLogToggle(true, true);
+    setStatus(`Error loading historical log: ${String(err || '')}`);
+  } finally {
+    updateIssueRunControls();
+  }
+}
+
+async function markIssueRunResolved() {
+  const runId = getIssueSelectedRunId();
+  if (!runId) {
+    setStatus('Provide a run ID first');
+    return;
+  }
+  // Resolved is an operator-side acknowledgement for the current run timeline.
+  issueResolvedRunIds.add(runId);
+  updateIssueRunControls();
+  appendIssuePlaywrightLog(`Marked resolved: ${runId}`);
+  setIssueLogToggle(true, false);
+  setStatus(`Run marked as resolved: ${runId}`);
+  try {
+    await fetch(withIssueSecret(`/resolve/${encodeURIComponent(runId)}`), {
+      method: 'POST'
+    });
+  } catch (_) {
+    // best effort: the UI state is enough even if the historical event write fails
+  }
+  issueRecentRuns = issueRecentRuns.map((item) => {
+    if (String((item && item.run_id) || '').trim() !== runId) return item;
+    return {...item, status: 'resolved'};
+  });
+  renderIssueRecentRunsList();
+}
+
+async function listIssueRecentRuns() {
+  const btn = document.getElementById('issueListRunsBtn');
+  const oldText = btn ? btn.innerText : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerText = 'Loading...';
+  }
+  try {
+    // The recent-run list is derived from the shared event stream, newest first.
+    const r = await fetch(withIssueSecret('/events?limit=200'));
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    const items = Array.isArray(data.events) ? data.events : [];
+    const seen = new Set();
+    const recent = [];
+    for (let i = items.length - 1; i >= 0; i -= 1) {
+      const item = items[i] || {};
+      const meta = item.meta || {};
+      const runId = String(meta.run_id || '').trim();
+      if (!runId || seen.has(runId)) continue;
+      seen.add(runId);
+      const relatedItems = items.filter((candidate) => String((((candidate || {}).meta) || {}).run_id || '').trim() === runId);
+      const resolved = relatedItems.some((candidate) => String((candidate || {}).event || '').trim() === 'issue_run_resolved');
+      const failed = relatedItems.some((candidate) => String((candidate || {}).event || '').trim() === 'issue_submit_failed');
+      const submitted = relatedItems.some((candidate) => String((candidate || {}).event || '').trim() === 'issue_submitted');
+      if (resolved) issueResolvedRunIds.add(runId);
+      recent.push({
+        run_id: runId,
+        status: resolved ? 'resolved' : (failed ? 'failed' : (submitted ? 'submitted' : 'pending'))
+      });
+      if (recent.length >= 20) break;
+    }
+    issueRecentRuns = recent;
+    renderIssueRecentRunsList();
+    updateIssueRunControls();
+    setStatus(`Loaded ${recent.length} recent run(s)`);
+  } catch (err) {
+    setStatus(`Error loading recent runs: ${String(err || '')}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerText = oldText || 'List recent runs';
+    }
+  }
+}
+
 let issuePlaywrightPollTimer = null;
 let issuePlaywrightPollBusy = false;
 let issuePlaywrightSeen = new Set();
@@ -1368,15 +1576,11 @@ async function pollIssuePlaywrightSteps(runId) {
   if (!runId || issuePlaywrightPollBusy) return;
   issuePlaywrightPollBusy = true;
   try {
-    const r = await fetch(withIssueSecret('/events?limit=120'));
+    const r = await fetch(withIssueSecret(`/events?limit=40&run_id=${encodeURIComponent(runId)}&event=issue_playwright_step`));
     const data = await r.json();
     if (!r.ok) return;
     const items = Array.isArray(data.events) ? data.events : [];
-    // Consume only short live step events from the active run.
-    const steps = items
-      .filter((item) => String(item.event || '').trim() === 'issue_playwright_step')
-      .filter((item) => String((((item.meta || {}).run_id) || '')).trim() === runId);
-    steps.forEach((item) => {
+    items.forEach((item) => {
       const ts = String(item.ts || '').trim();
       const msg = String((((item.meta || {}).message) || '')).trim();
       if (!msg) return;
@@ -1398,7 +1602,7 @@ function startIssuePlaywrightRealtime(runId) {
   pollIssuePlaywrightSteps(runId);
   issuePlaywrightPollTimer = setInterval(() => {
     pollIssuePlaywrightSteps(runId);
-  }, 1500);
+  }, 2500);
 }
 
 function extractIssueUrlFromRunEvents(items, runId) {
@@ -1418,7 +1622,7 @@ async function reconcileIssueSubmitByRunId(runId, attempts = 8, waitMs = 1500) {
   if (!runId) return {state: 'unknown', finalUrl: ''};
   for (let i = 0; i < attempts; i += 1) {
     try {
-      const r = await fetch(withIssueSecret('/events?limit=300'));
+      const r = await fetch(withIssueSecret(`/events?limit=80&run_id=${encodeURIComponent(runId)}`));
       const data = await r.json();
       if (r.ok) {
         const items = Array.isArray(data.events) ? data.events : [];
@@ -1467,6 +1671,10 @@ async function submitIssueDraft() {
   // While Playwright is running, keep the log panel visible as live output.
   setIssueLogToggle(false, true);
   const expectedRunId = String((currentIssue && currentIssue.issue_id) || '').trim();
+  if (expectedRunId) {
+    issueResolvedRunIds.delete(expectedRunId);
+    setIssueCurrentRunId(expectedRunId);
+  }
   startIssuePlaywrightRealtime(expectedRunId);
   try {
     appendIssuePlaywrightLog('Sending draft to /issue-agent/submit...');
@@ -1489,6 +1697,7 @@ async function submitIssueDraft() {
     const warnings = Array.isArray(result.warnings) ? result.warnings : [];
     const createdInGithub = finalUrl.includes('/issues/') && /[0-9]+([?#].*)?$/.test(finalUrl);
     if (finalUrl) currentIssue.generated_link = finalUrl;
+    if (runId) setIssueCurrentRunId(runId);
     appendIssuePlaywrightLog('Playwright execution finished successfully.');
     if (summary) appendIssuePlaywrightLog(summary);
     if (finalUrl) appendIssuePlaywrightLog(`Issue created/updated at: ${finalUrl}`);
@@ -1532,6 +1741,7 @@ async function submitIssueDraft() {
       }
       setStatus('Warning: UI request failed, but backend completed the issue submission.');
       setIssueLogToggle(true, false);
+      setIssueCurrentRunId(expectedRunId);
       renderIssueDraftEditor();
     } else if (reconcile.state === 'failed') {
       appendIssuePlaywrightLog('Backend confirms submit failed for this run.');
@@ -1554,6 +1764,7 @@ async function submitIssueDraft() {
     stopIssuePlaywrightRealtime();
     btn.disabled = false;
     btn.innerText = oldText;
+    updateIssueRunControls();
   }
 }
 
