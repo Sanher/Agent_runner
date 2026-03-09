@@ -8,3 +8,4 @@ __pycache*
 no_headless/*.json
 no_headless/.env
 .env
+progress.md
