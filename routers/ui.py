@@ -651,14 +651,17 @@ def create_ui_router(job_secret: str) -> APIRouter:
         </select>
         <button onclick=\"listIssueRecentRuns()\" id=\"issueListRunsBtn\">List recent runs</button>
         <button onclick=\"loadIssueHistoryLog()\" id=\"issueLoadHistoryBtn\">View historical log</button>
-        <button onclick=\"markIssueRunResolved()\" id=\"issueMarkResolvedBtn\" disabled>Mark resolved</button>
       </div>
       <div id=\"issueDraftRuntimeGrid\" class=\"issue-runtime-grid\" style=\"display:none;\">
         <div id=\"issueDraftEditor\" style=\"display:none;\">
-          <label class=\"muted\">Draft title (editable)</label>
-          <input id=\"issueDraftTitle\" class=\"field\" placeholder=\"Draft title\" />
-          <label class=\"muted\">Draft description (editable)</label>
-          <textarea id=\"issueDraftDescription\" class=\"field\" style=\"min-height:120px\" placeholder=\"Draft description\"></textarea>
+          <div id=\"issueDraftTitleRow\">
+            <label class=\"muted\">Draft title (editable)</label>
+            <input id=\"issueDraftTitle\" class=\"field\" placeholder=\"Draft title\" />
+          </div>
+          <div id=\"issueDraftDescriptionRow\">
+            <label id=\"issueDraftDescriptionLabel\" class=\"muted\">Draft description (editable)</label>
+            <textarea id=\"issueDraftDescription\" class=\"field\" style=\"min-height:120px\" placeholder=\"Draft description\"></textarea>
+          </div>
           <div id=\"issueDraftStepsRow\" style=\"display:none;\">
             <label class=\"muted\">Draft steps to reproduce (editable, bug only)</label>
             <textarea id=\"issueDraftSteps\" class=\"field\" style=\"min-height:110px\" placeholder=\"1. Go to ...&#10;2. Click ...&#10;3. See ...\"></textarea>
@@ -672,6 +675,16 @@ def create_ui_router(job_secret: str) -> APIRouter:
           <h4 class=\"issue-log-title\">Playwright execution log</h4>
           <div id=\"issuePlaywrightLog\" class=\"logs\">No execution logs yet.</div>
         </div>
+      </div>
+      <div id=\"issueHistoryLogWrap\" class=\"issue-log-panel\" style=\"display:none;\">
+        <div style=\"display:flex; gap:8px; align-items:center; justify-content:space-between; margin-bottom:8px;\">
+          <h4 class=\"issue-log-title\" style=\"margin:0;\">Historical execution log</h4>
+          <div style=\"display:flex; gap:8px; align-items:center;\">
+            <button onclick=\"toggleIssueHistoryLog()\" id=\"issueToggleHistoryBtn\">Show historical log</button>
+            <button onclick=\"markIssueRunResolved()\" id=\"issueMarkResolvedBtn\" style=\"display:none;\">Mark resolved</button>
+          </div>
+        </div>
+        <div id=\"issueHistoryLog\" class=\"logs\" style=\"display:none;\">No historical logs loaded.</div>
       </div>
       <pre id=\"issueGeneratedJson\" style=\"display:none;\">{}</pre>
     </div>
@@ -749,8 +762,11 @@ let statusDismissTimer = null;
 let issuePlaywrightLogLines = [];
 let issueLogToggleAllowed = false;
 let issueCurrentRunId = '';
+let issueActiveRunId = '';
 let issueResolvedRunIds = new Set();
 let issueRecentRuns = [];
+let issueHistoryLogLines = [];
+let issueHistoryToggleAllowed = false;
 let emailSettingsCache = {
   default_from_email: '',
   default_cc_email: ''
@@ -1266,19 +1282,26 @@ function setIssueCurrentRunId(runId) {
   updateIssueRunControls();
 }
 
+function setIssueActiveRunId(runId) {
+  issueActiveRunId = String(runId || '').trim();
+  updateIssueRunControls();
+}
+
 function updateIssueRunControls() {
   const input = document.getElementById('issueRunId');
   const state = document.getElementById('issueRunResolvedState');
   const markBtn = document.getElementById('issueMarkResolvedBtn');
   const selectedRunId = String((input && input.value) || '').trim() || issueCurrentRunId;
   const isResolved = !!selectedRunId && issueResolvedRunIds.has(selectedRunId);
+  const isPastRun = !!selectedRunId && (!issueActiveRunId || selectedRunId !== issueActiveRunId);
   if (state) {
     state.innerText = selectedRunId
       ? `Run status: ${isResolved ? 'resolved' : 'pending review'}`
       : 'Run status: no active run';
   }
   if (markBtn) {
-    markBtn.disabled = !selectedRunId || isResolved;
+    markBtn.style.display = isPastRun && !isResolved ? 'inline-block' : 'none';
+    markBtn.disabled = !selectedRunId || isResolved || !isPastRun;
   }
 }
 
@@ -1356,6 +1379,38 @@ function toggleIssuePlaywrightLog() {
   logToggle.innerText = currentlyVisible ? 'Show Playwright log' : 'Hide Playwright log';
 }
 
+function clearIssueHistoryLog(hidePanel = false) {
+  issueHistoryLogLines = [];
+  const logWrap = document.getElementById('issueHistoryLogWrap');
+  const logBox = document.getElementById('issueHistoryLog');
+  const logToggle = document.getElementById('issueToggleHistoryBtn');
+  if (logBox) logBox.innerText = 'No historical logs loaded.';
+  if (hidePanel && logWrap) logWrap.style.display = 'none';
+  if (logBox && hidePanel) logBox.style.display = 'none';
+  if (hidePanel) issueHistoryToggleAllowed = false;
+  if (logToggle) logToggle.innerText = 'Show historical log';
+}
+
+function setIssueHistoryToggle(allowed, openPanel = false) {
+  issueHistoryToggleAllowed = !!allowed;
+  const logWrap = document.getElementById('issueHistoryLogWrap');
+  const logBox = document.getElementById('issueHistoryLog');
+  const logToggle = document.getElementById('issueToggleHistoryBtn');
+  if (logWrap) logWrap.style.display = issueHistoryToggleAllowed ? 'block' : 'none';
+  if (logBox) logBox.style.display = openPanel ? 'block' : 'none';
+  if (logToggle) logToggle.innerText = openPanel ? 'Hide historical log' : 'Show historical log';
+}
+
+function toggleIssueHistoryLog() {
+  if (!issueHistoryToggleAllowed) return;
+  const logBox = document.getElementById('issueHistoryLog');
+  const logToggle = document.getElementById('issueToggleHistoryBtn');
+  if (!logBox || !logToggle) return;
+  const currentlyVisible = logBox.style.display !== 'none';
+  logBox.style.display = currentlyVisible ? 'none' : 'block';
+  logToggle.innerText = currentlyVisible ? 'Show historical log' : 'Hide historical log';
+}
+
 function renderIssueDraftEditor() {
   const box = document.getElementById('issueDraftEditor');
   const runtimeGrid = document.getElementById('issueDraftRuntimeGrid');
@@ -1373,13 +1428,25 @@ function renderIssueDraftEditor() {
     return;
   }
   const title = document.getElementById('issueDraftTitle');
+  const titleRow = document.getElementById('issueDraftTitleRow');
   const description = document.getElementById('issueDraftDescription');
+  const descriptionLabel = document.getElementById('issueDraftDescriptionLabel');
   const stepsRow = document.getElementById('issueDraftStepsRow');
   const steps = document.getElementById('issueDraftSteps');
   const issueType = String((currentIssue && currentIssue.issue_type) || '').trim().toLowerCase();
+  const isCommentMode = !!currentIssue.include_comment && !!String(currentIssue.comment_issue_number || '').trim();
   const showSteps = issueType === 'bug';
   if (title) title.value = String(currentIssue.title || '');
-  if (description) description.value = String(currentIssue.description || '');
+  if (titleRow) titleRow.style.display = isCommentMode ? 'none' : 'block';
+  if (descriptionLabel) {
+    descriptionLabel.innerText = isCommentMode ? 'Draft comment (editable)' : 'Draft description (editable)';
+  }
+  if (description) {
+    description.value = isCommentMode
+      ? String(currentIssue.comment || currentIssue.description || '')
+      : String(currentIssue.description || '');
+    description.placeholder = isCommentMode ? 'Draft comment' : 'Draft description';
+  }
   if (stepsRow) stepsRow.style.display = showSteps ? 'block' : 'none';
   if (steps) steps.value = showSteps ? String(currentIssue.steps_to_reproduce || '') : '';
   box.style.display = 'block';
@@ -1398,8 +1465,17 @@ function syncIssueDraftFromEditor() {
   const description = document.getElementById('issueDraftDescription');
   const steps = document.getElementById('issueDraftSteps');
   const issueType = String(currentIssue.issue_type || '').trim().toLowerCase();
-  if (title) currentIssue.title = String(title.value || '').trim();
-  if (description) currentIssue.description = String(description.value || '').trim();
+  const isCommentMode = !!currentIssue.include_comment && !!String(currentIssue.comment_issue_number || '').trim();
+  if (title && !isCommentMode) currentIssue.title = String(title.value || '').trim();
+  if (description) {
+    const descriptionText = String(description.value || '').trim();
+    if (isCommentMode) {
+      currentIssue.comment = descriptionText;
+      currentIssue.description = descriptionText;
+    } else {
+      currentIssue.description = descriptionText;
+    }
+  }
   if (steps && issueType === 'bug') {
     currentIssue.steps_to_reproduce = String(steps.value || '').trim();
   }
@@ -1458,9 +1534,10 @@ async function loadIssueHistoryLog() {
   // Historical view replays the persisted backend events for one concrete run_id.
   const statusBox = document.getElementById('issueSubmitStatus');
   stopIssuePlaywrightRealtime();
-  clearIssuePlaywrightLog(false);
-  setIssueLogToggle(true, true);
-  appendIssuePlaywrightLog(`Loading historical log for ${runId}...`);
+  clearIssueHistoryLog(false);
+  setIssueHistoryToggle(true, true);
+  const historyBox = document.getElementById('issueHistoryLog');
+  if (historyBox) historyBox.innerText = `Loading historical log for ${runId}...`;
   try {
     const r = await fetch(withIssueSecret(`/events?limit=200&run_id=${encodeURIComponent(runId)}`));
     const data = await r.json();
@@ -1469,20 +1546,18 @@ async function loadIssueHistoryLog() {
     const lines = items.map(formatIssueHistoryEvent).filter(Boolean);
     const isResolved = items.some((item) => String((item && item.event) || '').trim() === 'issue_run_resolved');
     if (isResolved) issueResolvedRunIds.add(runId);
-    issuePlaywrightLogLines = lines.length ? lines : [`No stored events found for ${runId}.`];
-    const logBox = document.getElementById('issuePlaywrightLog');
-    const logWrap = document.getElementById('issuePlaywrightLogWrap');
-    if (logWrap) logWrap.style.display = 'block';
+    issueHistoryLogLines = lines.length ? lines : [`No stored events found for ${runId}.`];
+    const logBox = document.getElementById('issueHistoryLog');
     if (logBox) {
-      logBox.innerText = issuePlaywrightLogLines.join('\\n');
+      logBox.innerText = issueHistoryLogLines.join('\\n');
       logBox.scrollTop = 0;
     }
     setIssueCurrentRunId(runId);
     if (statusBox) statusBox.innerText = `Historical log loaded: ${runId}`;
     setStatus(`Historical Playwright log loaded: ${runId}`);
   } catch (err) {
-    appendIssuePlaywrightLog(`Historical log failed: ${String(err || '')}`);
-    setIssueLogToggle(true, true);
+    if (historyBox) historyBox.innerText = `Historical log failed: ${String(err || '')}`;
+    setIssueHistoryToggle(true, true);
     setStatus(`Error loading historical log: ${String(err || '')}`);
   } finally {
     updateIssueRunControls();
@@ -1498,8 +1573,11 @@ async function markIssueRunResolved() {
   // Resolved is an operator-side acknowledgement for the current run timeline.
   issueResolvedRunIds.add(runId);
   updateIssueRunControls();
-  appendIssuePlaywrightLog(`Marked resolved: ${runId}`);
-  setIssueLogToggle(true, false);
+  if (issueHistoryLogLines.length) {
+    issueHistoryLogLines.push(`[${new Date().toLocaleTimeString()}] Marked resolved`);
+    const historyBox = document.getElementById('issueHistoryLog');
+    if (historyBox) historyBox.innerText = issueHistoryLogLines.join('\\n');
+  }
   setStatus(`Run marked as resolved: ${runId}`);
   try {
     await fetch(withIssueSecret(`/resolve/${encodeURIComponent(runId)}`), {
@@ -1655,11 +1733,20 @@ async function submitIssueDraft() {
     return;
   }
   syncIssueDraftFromEditor();
+  const isCommentMode = !!currentIssue.include_comment && !!String(currentIssue.comment_issue_number || '').trim();
   const draftTitle = String(currentIssue.title || '').trim();
-  const draftDescription = String(currentIssue.description || '').trim();
-  if (!draftTitle || !draftDescription) {
-    document.getElementById('issueSubmitStatus').innerText = 'Title and description are required before submit';
-    appendIssuePlaywrightLog('Validation failed: title/description cannot be empty.');
+  const draftDescription = isCommentMode
+    ? String(currentIssue.comment || currentIssue.description || '').trim()
+    : String(currentIssue.description || '').trim();
+  if ((!isCommentMode && (!draftTitle || !draftDescription)) || (isCommentMode && !draftDescription)) {
+    document.getElementById('issueSubmitStatus').innerText = isCommentMode
+      ? 'Comment body is required before submit'
+      : 'Title and description are required before submit';
+    appendIssuePlaywrightLog(
+      isCommentMode
+        ? 'Validation failed: comment body cannot be empty.'
+        : 'Validation failed: title/description cannot be empty.'
+    );
     return;
   }
   appendIssuePlaywrightLog('Draft validated. Preparing Playwright execution.');
@@ -1673,6 +1760,7 @@ async function submitIssueDraft() {
   const expectedRunId = String((currentIssue && currentIssue.issue_id) || '').trim();
   if (expectedRunId) {
     issueResolvedRunIds.delete(expectedRunId);
+    setIssueActiveRunId(expectedRunId);
     setIssueCurrentRunId(expectedRunId);
   }
   startIssuePlaywrightRealtime(expectedRunId);
@@ -1697,7 +1785,10 @@ async function submitIssueDraft() {
     const warnings = Array.isArray(result.warnings) ? result.warnings : [];
     const createdInGithub = finalUrl.includes('/issues/') && /[0-9]+([?#].*)?$/.test(finalUrl);
     if (finalUrl) currentIssue.generated_link = finalUrl;
-    if (runId) setIssueCurrentRunId(runId);
+    if (runId) {
+      setIssueActiveRunId(runId);
+      setIssueCurrentRunId(runId);
+    }
     appendIssuePlaywrightLog('Playwright execution finished successfully.');
     if (summary) appendIssuePlaywrightLog(summary);
     if (finalUrl) appendIssuePlaywrightLog(`Issue created/updated at: ${finalUrl}`);
@@ -1741,6 +1832,7 @@ async function submitIssueDraft() {
       }
       setStatus('Warning: UI request failed, but backend completed the issue submission.');
       setIssueLogToggle(true, false);
+      setIssueActiveRunId(expectedRunId);
       setIssueCurrentRunId(expectedRunId);
       renderIssueDraftEditor();
     } else if (reconcile.state === 'failed') {

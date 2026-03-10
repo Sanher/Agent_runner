@@ -46,6 +46,31 @@ class IssueUiBehaviorTests(unittest.TestCase):
         self.assertIn("setIssueLogToggle(true, true);", html)
         self.assertRegex(html, re.compile(r"Todo OK: issue created and all post-create clicks succeeded"))
 
+    def test_issue_ui_contains_separate_collapsed_historical_log_panel(self) -> None:
+        response = self.client.get("/ui?secret=top-secret")
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        self.assertIn('id="issueHistoryLogWrap"', html)
+        self.assertIn('id="issueHistoryLog"', html)
+        self.assertIn('id="issueToggleHistoryBtn"', html)
+        self.assertIn("Show historical log", html)
+        self.assertIn("function toggleIssueHistoryLog()", html)
+        self.assertIn("function clearIssueHistoryLog(", html)
+        self.assertIn("function setIssueHistoryToggle(", html)
+
+    def test_comment_mode_uses_comment_body_instead_of_title(self) -> None:
+        response = self.client.get("/ui?secret=top-secret")
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        self.assertIn('id="issueDraftTitleRow"', html)
+        self.assertIn('id="issueDraftDescriptionLabel"', html)
+        self.assertIn("const isCommentMode = !!currentIssue.include_comment", html)
+        self.assertIn("titleRow.style.display = isCommentMode ? 'none' : 'block';", html)
+        self.assertIn("descriptionLabel.innerText = isCommentMode ? 'Draft comment (editable)'", html)
+        self.assertIn("currentIssue.comment = descriptionText;", html)
+        self.assertIn("Comment body is required before submit", html)
+        self.assertIn("Validation failed: comment body cannot be empty.", html)
+
 
 if __name__ == "__main__":
     unittest.main()
