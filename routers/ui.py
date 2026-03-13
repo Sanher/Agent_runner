@@ -642,16 +642,6 @@ def create_ui_router(job_secret: str) -> APIRouter:
       </div>
       <button onclick=\"generateIssueDraft()\" id=\"issueGenerateBtn\">Generate draft</button>
       <div id=\"issueGenerateStatus\" class=\"muted\"></div>
-      <div id=\"issueRunTools\" style=\"margin-top:12px;\">
-        <label class=\"muted\">Run ID / historical log</label>
-        <input id=\"issueRunId\" class=\"field\" placeholder=\"issue-YYYYMMDD-HHMMSS\" oninput=\"updateIssueRunControls()\">
-        <div id=\"issueRunResolvedState\" class=\"muted\">Run status: no active run</div>
-        <select id=\"issueRecentRunsList\" class=\"field\" onchange=\"selectIssueRecentRun()\">
-          <option value=\"\">Recent runs will appear here</option>
-        </select>
-        <button onclick=\"listIssueRecentRuns()\" id=\"issueListRunsBtn\">List recent runs</button>
-        <button onclick=\"loadIssueHistoryLog()\" id=\"issueLoadHistoryBtn\">View historical log</button>
-      </div>
       <div id=\"issueDraftRuntimeGrid\" class=\"issue-runtime-grid\" style=\"display:none;\">
         <div id=\"issueDraftEditor\" style=\"display:none;\">
           <div id=\"issueDraftTitleRow\">
@@ -676,17 +666,35 @@ def create_ui_router(job_secret: str) -> APIRouter:
           <div id=\"issuePlaywrightLog\" class=\"logs\">No execution logs yet.</div>
         </div>
       </div>
-      <div id=\"issueHistoryLogWrap\" class=\"issue-log-panel\" style=\"display:none;\">
-        <div style=\"display:flex; gap:8px; align-items:center; justify-content:space-between; margin-bottom:8px;\">
-          <h4 class=\"issue-log-title\" style=\"margin:0;\">Historical execution log</h4>
-          <div style=\"display:flex; gap:8px; align-items:center;\">
-            <button onclick=\"toggleIssueHistoryLog()\" id=\"issueToggleHistoryBtn\">Show historical log</button>
-            <button onclick=\"markIssueRunResolved()\" id=\"issueMarkResolvedBtn\" style=\"display:none;\">Mark resolved</button>
-          </div>
-        </div>
-        <div id=\"issueHistoryLog\" class=\"logs\" style=\"display:none;\">No historical logs loaded.</div>
-      </div>
       <pre id=\"issueGeneratedJson\" style=\"display:none;\">{}</pre>
+    </div>
+    <div class=\"card\">
+      <div style=\"display:flex; gap:8px; align-items:center; justify-content:space-between;\">
+        <h3 style=\"margin:0;\">Run history</h3>
+        <button onclick=\"toggleIssueHistoryCard()\" id=\"issueHistoryCardToggleBtn\">Show run history</button>
+      </div>
+      <div id=\"issueHistoryCardBody\" style=\"display:none; margin-top:12px;\">
+        <div id=\"issueRunTools\">
+          <label class=\"muted\">Run ID / historical log</label>
+          <input id=\"issueRunId\" class=\"field\" placeholder=\"issue-YYYYMMDD-HHMMSS\" oninput=\"updateIssueRunControls()\">
+          <div id=\"issueRunResolvedState\" class=\"muted\">Run status: no active run</div>
+          <select id=\"issueRecentRunsList\" class=\"field\" onchange=\"selectIssueRecentRun()\">
+            <option value=\"\">Recent runs will appear here</option>
+          </select>
+          <button onclick=\"listIssueRecentRuns()\" id=\"issueListRunsBtn\">List recent runs</button>
+          <button onclick=\"loadIssueHistoryLog()\" id=\"issueLoadHistoryBtn\">View historical log</button>
+        </div>
+        <div id=\"issueHistoryLogWrap\" class=\"issue-log-panel\" style=\"display:none;\">
+          <div style=\"display:flex; gap:8px; align-items:center; justify-content:space-between; margin-bottom:8px;\">
+            <h4 class=\"issue-log-title\" style=\"margin:0;\">Historical execution log</h4>
+            <div style=\"display:flex; gap:8px; align-items:center;\">
+              <button onclick=\"toggleIssueHistoryLog()\" id=\"issueToggleHistoryBtn\">Show historical log</button>
+              <button onclick=\"markIssueRunResolved()\" id=\"issueMarkResolvedBtn\" style=\"display:none;\">Mark resolved</button>
+            </div>
+          </div>
+          <div id=\"issueHistoryLog\" class=\"logs\" style=\"display:none;\">No historical logs loaded.</div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -1282,6 +1290,19 @@ function setIssueCurrentRunId(runId) {
   updateIssueRunControls();
 }
 
+function setIssueHistoryCardExpanded(openPanel = false) {
+  const body = document.getElementById('issueHistoryCardBody');
+  const toggle = document.getElementById('issueHistoryCardToggleBtn');
+  if (body) body.style.display = openPanel ? 'block' : 'none';
+  if (toggle) toggle.innerText = openPanel ? 'Hide run history' : 'Show run history';
+}
+
+function toggleIssueHistoryCard() {
+  const body = document.getElementById('issueHistoryCardBody');
+  const currentlyVisible = !!body && body.style.display !== 'none';
+  setIssueHistoryCardExpanded(!currentlyVisible);
+}
+
 function setIssueActiveRunId(runId) {
   issueActiveRunId = String(runId || '').trim();
   updateIssueRunControls();
@@ -1389,6 +1410,7 @@ function clearIssueHistoryLog(hidePanel = false) {
   if (logBox && hidePanel) logBox.style.display = 'none';
   if (hidePanel) issueHistoryToggleAllowed = false;
   if (logToggle) logToggle.innerText = 'Show historical log';
+  if (hidePanel) setIssueHistoryCardExpanded(false);
 }
 
 function setIssueHistoryToggle(allowed, openPanel = false) {
@@ -1533,6 +1555,7 @@ async function loadIssueHistoryLog() {
   }
   // Historical view replays the persisted backend events for one concrete run_id.
   const statusBox = document.getElementById('issueSubmitStatus');
+  setIssueHistoryCardExpanded(true);
   stopIssuePlaywrightRealtime();
   clearIssueHistoryLog(false);
   setIssueHistoryToggle(true, true);
@@ -1596,6 +1619,7 @@ async function markIssueRunResolved() {
 async function listIssueRecentRuns() {
   const btn = document.getElementById('issueListRunsBtn');
   const oldText = btn ? btn.innerText : '';
+  setIssueHistoryCardExpanded(true);
   if (btn) {
     btn.disabled = true;
     btn.innerText = 'Loading...';
