@@ -41,6 +41,22 @@ SIGNATURE_ASSET_KEYS = (
     "telegram",
 )
 REVIEWED_RETENTION_DAYS = 7
+TRAILING_SIGNOFF_LINES = (
+    "best regards",
+    "kind regards",
+    "regards",
+    "many thanks",
+    "thanks",
+    "thank you",
+    "sincerely",
+    "cheers",
+    "best",
+    "un saludo",
+    "saludos",
+    "atentamente",
+    "cordialmente",
+    "gracias",
+)
 
 
 class EmailAgentService:
@@ -189,6 +205,63 @@ class EmailAgentService:
     @staticmethod
     def _strip_html(value: str) -> str:
         return re.sub(r"<[^>]+>", "", str(value or ""))
+
+    @classmethod
+    def _sanitize_generated_draft(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+
+        text = re.sub(r"^```(?:text|plaintext)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+
+        lines = [line.rstrip() for line in text.splitlines()]
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        if lines and re.match(r"^(subject|asunto)\s*:", lines[0].strip(), flags=re.IGNORECASE):
+            lines.pop(0)
+            while lines and not lines[0].strip():
+                lines.pop(0)
+
+        if not lines:
+            return ""
+
+        last_content_index = -1
+        for index, line in enumerate(lines):
+            if line.strip():
+                last_content_index = index
+        if last_content_index == -1:
+            return ""
+
+        cutoff = None
+        for index in range(max(0, last_content_index - 3), last_content_index + 1):
+            normalized = re.sub(r"[\s,.:;!?-]+$", "", lines[index].strip().lower())
+            if normalized in TRAILING_SIGNOFF_LINES:
+                cutoff = index
+                break
+
+        if cutoff is not None:
+            lines = lines[:cutoff]
+            while lines and not lines[-1].strip():
+                lines.pop()
+
+        return "\n".join(lines).strip()
+
+    @staticmethod
+    def _strip_trailing_signature_block(
+        value: str,
+        signature_template: str,
+        plain_signature: str,
+    ) -> str:
+        text = str(value or "").rstrip()
+        candidates = [
+            str(signature_template or "").strip(),
+            str(plain_signature or "").strip(),
+        ]
+        for candidate in candidates:
+            if candidate and text.endswith(candidate):
+                text = text[: -len(candidate)].rstrip()
+        return text
 
     @classmethod
     def _signature_asset_style(cls, key: str) -> str:
@@ -519,6 +592,9 @@ class EmailAgentService:
                 "Write only the final email body as plain text.",
                 "Use English by default unless the incoming email clearly requires a different language.",
                 "Never pretend the email was sent; this is only a draft suggestion.",
+                "Do not include any subject line, title, or 'RE:' prefix.",
+                "Do not include greetings, sign-offs, or courtesy closings such as 'Best regards' or 'Thanks'.",
+                "Do not include the sender name, role, or signature block because that is added separately.",
                 "If special guidance is present, follow it strictly and include referenced URLs exactly.",
             ],
         }
@@ -545,11 +621,7 @@ class EmailAgentService:
         response.raise_for_status()
         data = response.json()
         draft = data["choices"][0]["message"]["content"].strip()
-
-        signature = config.get("signature", "")
-        if signature:
-            draft = f"{draft}\n\n{signature}"
-        return draft
+        return self._sanitize_generated_draft(draft)
 
     def _notify_new_suggestion(self, suggestion: Dict[str, Any]) -> None:
         if not self.webhook_notify_url:
@@ -765,9 +837,11 @@ class EmailAgentService:
                 signature_assets_dir,
             )
 
-            core_body = source_body
-            if signature_template and core_body.rstrip().endswith(signature_template):
-                core_body = core_body.rstrip()[: -len(signature_template)].rstrip()
+            core_body = self._strip_trailing_signature_block(
+                source_body,
+                signature_template,
+                plain_signature,
+            )
 
             draft_body = core_body
             if plain_signature:
