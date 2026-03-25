@@ -1720,7 +1720,7 @@ function extractIssueUrlFromRunEvents(items, runId) {
   return '';
 }
 
-async function reconcileIssueSubmitByRunId(runId, attempts = 8, waitMs = 1500) {
+async function reconcileIssueSubmitByRunId(runId, attempts = 30, waitMs = 2000) {
   if (!runId) return {state: 'unknown', finalUrl: ''};
   for (let i = 0; i < attempts; i += 1) {
     try {
@@ -1843,6 +1843,8 @@ async function submitIssueDraft() {
     const errText = String(err || '');
     appendIssuePlaywrightLog(`Playwright execution failed: ${errText}`);
     appendIssuePlaywrightLog('Checking backend run status...');
+    document.getElementById('issueSubmitStatus').innerText = 'Connection lost; checking backend status...';
+    setStatus('Warning: UI connection failed while the backend may still be processing. Checking status...');
     const reconcile = await reconcileIssueSubmitByRunId(expectedRunId);
     if (reconcile.state === 'submitted') {
       const recoveredUrl = String(reconcile.finalUrl || '').trim();
