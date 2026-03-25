@@ -815,6 +815,162 @@ class IssueServiceTests(unittest.TestCase):
             self.assertEqual("issue_run_resolved", payload["events"][0]["event"])
             self.assertEqual("issue-20260309-144724", payload["events"][0]["meta"]["run_id"])
 
+    def test_extract_enrichment_urls_filters_local_and_repo_links(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+
+            urls = svc._extract_enrichment_urls(
+                "Docs https://docs.example.com/api and local http://127.0.0.1/test "
+                "and repo https://example.test/test-org/backend/issues/new"
+            )
+
+            self.assertEqual(["https://docs.example.com/api"], urls)
+
+    def test_generate_issue_new_feature_applies_enriched_fields_and_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            svc._call_openai_issue_writer = lambda **kwargs: {
+                "title": "Integrar API externa",
+                "description": "ignored",
+                "steps_to_reproduce": "",
+                "comment": "",
+                "close_issue": False,
+                "warnings": {"user": ["missing_success_metric"], "source": []},
+            }
+            svc._enrich_new_feature_from_links = lambda **kwargs: {
+                "fields": {
+                    "competition": "Sí, hay soluciones similares verificadas.",
+                    "why_better": "Podemos integrarlo con el flujo actual sin cambiar la UX.",
+                    "third_party_integration": "Sí, habría que integrar la API pública y su autenticación.",
+                },
+                "warnings": ["No se ha podido verificar pricing desde las URLs aportadas."],
+                "urls": ["https://docs.example.com/api"],
+            }
+
+            draft = svc.generate_issue(
+                user_input="Integrar https://docs.example.com/api en el flujo de auditorías",
+                issue_type="feature",
+                repo="management",
+                unit="customer",
+                include_comment=False,
+                comment_issue_number="",
+                as_new_feature=True,
+                as_third_party=False,
+                enrich_links=True,
+            )
+
+            self.assertIn("Sí, hay soluciones similares verificadas.", draft["description"])
+            self.assertIn("Podemos integrarlo con el flujo actual sin cambiar la UX.", draft["description"])
+            self.assertEqual(
+                {
+                    "source": ["No se ha podido verificar pricing desde las URLs aportadas."],
+                    "user": ["Falta definir una métrica de éxito."],
+                },
+                draft["draft_warnings"],
+            )
+
+    def test_generate_issue_new_feature_warns_when_enrichment_requested_without_valid_links(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            svc._call_openai_issue_writer = lambda **kwargs: {
+                "title": "Integrar API interna",
+                "description": "ignored",
+                "steps_to_reproduce": "",
+                "comment": "",
+                "close_issue": False,
+            }
+
+            draft = svc.generate_issue(
+                user_input="Integrar http://127.0.0.1:8000/docs",
+                issue_type="feature",
+                repo="management",
+                unit="customer",
+                include_comment=False,
+                comment_issue_number="",
+                as_new_feature=True,
+                as_third_party=False,
+                enrich_links=True,
+            )
+
+            self.assertEqual(
+                {
+                    "source": ["No se han detectado enlaces externos válidos para enriquecer la solicitud."],
+                    "user": [],
+                },
+                draft["draft_warnings"],
+            )
+
+    def test_generate_issue_blockchain_preserves_ai_draft_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            svc._call_openai_issue_writer = lambda **kwargs: {
+                "title": "base",
+                "description": "**Blockchain relevant info**",
+                "steps_to_reproduce": "",
+                "comment": "",
+                "close_issue": False,
+                "warnings": {
+                    "source": ["source_missing_tvl", "source_missing_exchange_confirmation"],
+                    "user": [],
+                },
+            }
+
+            draft = svc.generate_issue(
+                user_input="Chain docs https://chain.example/docs",
+                issue_type="blockchain",
+                repo="backend",
+                unit="core",
+                include_comment=False,
+                comment_issue_number="",
+                as_new_feature=False,
+                as_third_party=False,
+            )
+
+            self.assertEqual(
+                {
+                    "source": [
+                        "No se ha podido verificar el TVL desde las fuentes aportadas.",
+                        "No se ha podido confirmar el exchange principal desde las fuentes aportadas.",
+                    ],
+                    "user": [],
+                },
+                draft["draft_warnings"],
+            )
+
+    def test_generate_issue_exchange_preserves_ai_draft_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            svc._call_openai_issue_writer = lambda **kwargs: {
+                "title": "ExampleSwap",
+                "description": "**Exchange relevant info**",
+                "steps_to_reproduce": "",
+                "comment": "",
+                "close_issue": False,
+                "warnings": {
+                    "source": ["source_missing_factory"],
+                    "user": ["missing_dependency_context"],
+                },
+            }
+
+            draft = svc.generate_issue(
+                user_input="Exchange docs https://exchange.example/docs",
+                issue_type="exchange",
+                repo="backend",
+                unit="core",
+                include_comment=False,
+                comment_issue_number="",
+                as_new_feature=False,
+                as_third_party=False,
+            )
+
+            self.assertEqual(
+                {
+                    "source": ["No se ha podido verificar el contrato factory desde las fuentes aportadas."],
+                    "user": ["Falta contexto sobre dependencias o integraciones implicadas."],
+                },
+                draft["draft_warnings"],
+            )
+
     def test_generate_issue_backend_title_strips_issue_type_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             svc = self._build_service(Path(tmp))

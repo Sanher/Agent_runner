@@ -1,4 +1,5 @@
 import json
+import ipaddress
 import re
 import shutil
 import threading
@@ -46,44 +47,106 @@ NEW_FEATURE_TEMPLATE = """FASE 1 - SOLICITUD DE NUEVA FEATURE
 {info}
 
 ¿Lo tiene la competencia?
-Esto lo pasare yo
+{competition}
 
 Beneficios para la compañía ¿visitas? ¿nuevos ingresos?
-Atraera usuarios
+{benefits}
 
 ¿Riesgos?
-Coste de desarrollo
+{risks}
 
 ¿Porque la nuestra va a ser mejor que la competencia?
-Este dato lo pasare yo
+{why_better}
 
 FASE 2 - PRESENTACIÓN A MANAGERS
 ¿Por qué lo va a usar el usuario?
+{user_why_use}
 
 ¿Le funciona a la competencia? ¿Cuánto le aporta?
+{competitor_value}
 
 ¿Tenemos ya esa información o habría que generarla?
+{info_availability}
 
 ¿Hay que integrarse con un tercero?
+{third_party_integration}
 
 ¿Le va a costar una inversión a la compañía (aparte del coste en horas del equipo)?
+{investment}
 
 Tamaño??? M, L, XL
 (Semana, mes, varios meses)
+{size}
 
 ¿Favorece o perjudica a alguna otra feature del negocio?
+{feature_impact}
 
 ¿Cuál sería el objetivo medible marcado?
+{measurable_goal}
 
 ¿Es escalable?
+{scalable}
 
 ¿Cuál es el coste de mantenimiento?
+{maintenance_cost}
 
 FASE 3 - PASO AL EQUIPO DE DESARROLLO
 ¿Qué equipos se ven involucrados?
+{teams}
 
 Casos de uso / historias de usuario
+{use_cases}
 *******************"""
+NEW_FEATURE_DEFAULT_FIELDS = {
+    "competition": "Esto lo pasare yo",
+    "benefits": "Atraera usuarios",
+    "risks": "Coste de desarrollo",
+    "why_better": "Este dato lo pasare yo",
+    "user_why_use": "",
+    "competitor_value": "",
+    "info_availability": "",
+    "third_party_integration": "",
+    "investment": "",
+    "size": "",
+    "feature_impact": "",
+    "measurable_goal": "",
+    "scalable": "",
+    "maintenance_cost": "",
+    "teams": "",
+    "use_cases": "",
+}
+NEW_FEATURE_ENRICHABLE_FIELDS = tuple(key for key in NEW_FEATURE_DEFAULT_FIELDS if key != "risks")
+DRAFT_WARNING_MESSAGES = {
+    "source": {
+        "no_valid_external_links": "No se han detectado enlaces externos válidos para enriquecer la solicitud.",
+        "source_not_verifiable": "Hay información de fuentes que no se ha podido verificar o completar.",
+        "url_missing_pricing": "No se ha podido verificar pricing desde las URLs aportadas.",
+        "url_missing_auth_details": "No se han encontrado detalles suficientes de autenticación en las URLs aportadas.",
+        "url_missing_capabilities": "No se han encontrado suficientes capacidades o endpoints documentados en las URLs aportadas.",
+        "source_missing_tvl": "No se ha podido verificar el TVL desde las fuentes aportadas.",
+        "source_missing_chain_id": "No se ha podido verificar el chain id desde las fuentes aportadas.",
+        "source_missing_explorer": "No se ha podido verificar un block explorer desde las fuentes aportadas.",
+        "source_missing_exchange_confirmation": "No se ha podido confirmar el exchange principal desde las fuentes aportadas.",
+        "source_missing_factory": "No se ha podido verificar el contrato factory desde las fuentes aportadas.",
+        "source_missing_router": "No se ha podido verificar el contrato router desde las fuentes aportadas.",
+        "source_missing_contact_info": "No se ha podido verificar información de contacto suficiente desde las fuentes aportadas.",
+    },
+    "user": {
+        "missing_expected_behavior": "Falta describir el comportamiento esperado.",
+        "missing_current_behavior": "Falta describir el comportamiento actual.",
+        "missing_reproduction_steps": "Faltan pasos de reproducción suficientemente concretos.",
+        "missing_environment_context": "Falta contexto de entorno o plataforma afectada.",
+        "missing_affected_area": "Falta concretar el área afectada.",
+        "missing_user_value": "Falta explicar el valor para el usuario.",
+        "missing_scope_detail": "Falta concretar el alcance de la solicitud.",
+        "missing_success_metric": "Falta definir una métrica de éxito.",
+        "missing_dependency_context": "Falta contexto sobre dependencias o integraciones implicadas.",
+        "missing_acceptance_criteria": "Faltan criterios de aceptación.",
+        "missing_current_limitation": "Falta explicar la limitación actual.",
+        "missing_proposed_improvement": "Falta concretar la mejora propuesta.",
+    },
+}
+DEFAULT_DRAFT_WARNING_GROUPS = ("source", "user")
 
 
 class IssueAgentService:
@@ -350,6 +413,51 @@ class IssueAgentService:
             content = "\n".join(lines).strip()
         return json.loads(content)
 
+    @staticmethod
+    def _empty_draft_warnings() -> Dict[str, List[str]]:
+        return {group: [] for group in DEFAULT_DRAFT_WARNING_GROUPS}
+
+    @staticmethod
+    def _append_draft_warning_message(warnings: Dict[str, List[str]], group: str, message: str) -> None:
+        group_name = str(group or "").strip().lower()
+        text = str(message or "").strip()
+        if group_name not in warnings or not text:
+            return
+        if text not in warnings[group_name]:
+            warnings[group_name].append(text)
+
+    def _normalize_warning_group(self, raw: Any, group: str) -> List[str]:
+        normalized_group = str(group or "").strip().lower()
+        allowed = DRAFT_WARNING_MESSAGES.get(normalized_group, {})
+        result: List[str] = []
+        if isinstance(raw, list):
+            values = raw
+        elif str(raw or "").strip():
+            values = [raw]
+        else:
+            values = []
+        for item in values:
+            code = str(item or "").strip()
+            if not code:
+                continue
+            message = allowed.get(code)
+            if not message:
+                message = allowed.get("source_not_verifiable") if normalized_group == "source" else "Falta contexto del usuario para completar correctamente la solicitud."
+            if message not in result:
+                result.append(message)
+        return result
+
+    def _normalize_draft_warnings(self, raw: Any) -> Dict[str, List[str]]:
+        normalized = self._empty_draft_warnings()
+        if isinstance(raw, dict):
+            for group in DEFAULT_DRAFT_WARNING_GROUPS:
+                for message in self._normalize_warning_group(raw.get(group, []), group):
+                    self._append_draft_warning_message(normalized, group, message)
+            return normalized
+        for message in self._normalize_warning_group(raw, "source"):
+            self._append_draft_warning_message(normalized, "source", message)
+        return normalized
+
     def _normalize_issue_type(self, value: str) -> str:
         normalized = str(value or "").strip().lower()
         if normalized == "enhacement":
@@ -371,8 +479,14 @@ class IssueAgentService:
         return normalized if normalized in UNITS else "core"
 
     @staticmethod
-    def _build_new_feature_description(user_input: str) -> str:
-        return NEW_FEATURE_TEMPLATE.format(info=str(user_input or "").strip())
+    def _build_new_feature_description(user_input: str, enrichment: Optional[Dict[str, str]] = None) -> str:
+        values = dict(NEW_FEATURE_DEFAULT_FIELDS)
+        values["info"] = str(user_input or "").strip()
+        for key in NEW_FEATURE_DEFAULT_FIELDS:
+            candidate = str((enrichment or {}).get(key, "")).strip()
+            if candidate:
+                values[key] = candidate
+        return NEW_FEATURE_TEMPLATE.format(**values)
 
     @staticmethod
     def _repo_slug(repo: str) -> str:
@@ -424,6 +538,133 @@ class IssueAgentService:
     def _requires_web_browsing(issue_type: str) -> bool:
         normalized = str(issue_type or "").strip().lower()
         return "exchange" in normalized or "blockchain" in normalized
+
+    @staticmethod
+    def _extract_urls(text: str) -> List[str]:
+        raw_matches = re.findall(r"https?://[^\s<>()\"']+", str(text or ""), flags=re.I)
+        urls: List[str] = []
+        seen = set()
+        for raw in raw_matches:
+            candidate = str(raw or "").strip().rstrip(".,);:]")
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            urls.append(candidate)
+        return urls
+
+    @staticmethod
+    def _is_local_or_private_host(hostname: str) -> bool:
+        host = str(hostname or "").strip().lower()
+        if not host:
+            return True
+        if host in {"localhost", "::1"} or host.endswith(".local"):
+            return True
+        if host.startswith("127."):
+            return True
+        try:
+            ip = ipaddress.ip_address(host)
+            return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved)
+        except ValueError:
+            return False
+
+    def _issue_enrichment_blacklist_prefixes(self) -> List[str]:
+        prefixes: List[str] = []
+        for raw in [self.repo_base_url] + [self._repo_issues_base_url(repo) for repo in REPO_KEYS]:
+            value = self._sanitize_url_for_log(str(raw or "").strip()).rstrip("/")
+            if value:
+                prefixes.append(value.lower())
+        return prefixes
+
+    def _extract_enrichment_urls(self, text: str) -> List[str]:
+        candidates: List[str] = []
+        blocked_prefixes = self._issue_enrichment_blacklist_prefixes()
+        for raw_url in self._extract_urls(text):
+            safe_url = self._sanitize_url_for_log(raw_url).rstrip("/")
+            if not safe_url:
+                continue
+            lowered = safe_url.lower()
+            try:
+                host = urlsplit(safe_url).hostname or ""
+            except Exception:
+                continue
+            if self._is_local_or_private_host(host):
+                continue
+            if any(lowered.startswith(prefix) for prefix in blocked_prefixes):
+                continue
+            candidates.append(safe_url)
+        return candidates[:3]
+
+    def _enrich_new_feature_from_links(self, user_input: str, repo: str, urls: List[str]) -> Dict[str, Any]:
+        if not self.openai_api_key:
+            raise RuntimeError("Missing issue_openai_api_key")
+
+        normalized_urls = [self._sanitize_url_for_log(url) for url in urls if str(url or "").strip()]
+        payload = {
+            "task": "enrich_new_feature_from_links",
+            "user_input": str(user_input or "").strip(),
+            "urls": normalized_urls,
+            "required_output": {
+                "info": "string",
+                "competition": "string",
+                "benefits": "string",
+                "why_better": "string",
+                "user_why_use": "string",
+                "competitor_value": "string",
+                "info_availability": "string",
+                "third_party_integration": "string",
+                "investment": "string",
+                "size": "string",
+                "feature_impact": "string",
+                "measurable_goal": "string",
+                "scalable": "string",
+                "maintenance_cost": "string",
+                "teams": "string",
+                "use_cases": "string",
+                "warnings": ["string"],
+            },
+        }
+        language_law = "Write all returned fields in English." if repo == "backend" else "Write all returned fields in Spanish from Spain."
+        system_prompt = (
+            "You enrich a product/API feature request from user-provided links. "
+            "Use browsing only to inspect the provided URLs and clearly linked official docs/pricing pages from those URLs. "
+            "Do not perform general competitor research. "
+            "Never invent facts, plans, pricing, quotas, or capabilities. "
+            "If a field cannot be verified from the provided sources, return an empty string for that field and add a short warning. "
+            "Keep the text concise and practical for an internal feature request template. "
+            f"{language_law} "
+            "Return ONLY valid JSON."
+        )
+        headers = {
+            "Authorization": f"Bearer {self.openai_api_key}",
+            "Content-Type": "application/json",
+        }
+        response = httpx.post(
+            "https://api.openai.com/v1/responses",
+            headers=headers,
+            json={
+                "model": self.openai_model,
+                "instructions": system_prompt,
+                "input": json.dumps(payload, ensure_ascii=False),
+                "tools": [{"type": "web_search_preview"}],
+                "temperature": 0.1,
+            },
+            timeout=90,
+        )
+        response.raise_for_status()
+        content = self._extract_responses_output_text(response.json())
+        if not content:
+            raise RuntimeError("OpenAI Responses API returned no text output for link enrichment")
+        parsed = self._extract_json_content(content)
+        fields = {}
+        for key in ("info",) + NEW_FEATURE_ENRICHABLE_FIELDS:
+            fields[key] = str(parsed.get(key, "")).strip()
+        raw_warnings = parsed.get("warnings", [])
+        warnings: List[str] = []
+        if isinstance(raw_warnings, list):
+            warnings = [str(item).strip() for item in raw_warnings if str(item).strip()]
+        elif str(raw_warnings or "").strip():
+            warnings = [str(raw_warnings).strip()]
+        return {"fields": fields, "warnings": warnings, "urls": normalized_urls}
 
     @staticmethod
     def _infer_is_evm_from_text(text: str) -> Optional[bool]:
@@ -549,6 +790,10 @@ class IssueAgentService:
                 "steps_to_reproduce": "string",
                 "comment": "string",
                 "close_issue": "boolean",
+                "warnings": {
+                    "source": ["code"],
+                    "user": ["code"],
+                },
             },
         }
         if is_new_feature:
@@ -618,15 +863,24 @@ class IssueAgentService:
             "If include_comment=true and close_issue=true, return a single plain resolution sentence only, "
             "without labels/headings and without the word 'Resolution'."
         )
+        warning_codes_law = (
+            "Warnings output law: "
+            f"source warning codes allowed={','.join(sorted(DRAFT_WARNING_MESSAGES['source'].keys()))}; "
+            f"user warning codes allowed={','.join(sorted(DRAFT_WARNING_MESSAGES['user'].keys()))}. "
+            "Return only codes from those lists. "
+            "Never include names, URLs, brands, or free-form explanations in warnings."
+        )
 
         system_prompt = (
             "You are an issue writing assistant. "
             "Mimic the style from memory examples. "
-            "Return ONLY valid JSON with keys: title, description, steps_to_reproduce, comment. "
+            "Return ONLY valid JSON with keys: title, description, steps_to_reproduce, comment, warnings. "
             "If comment_issue_number is provided, reference it in the comment as a response number. "
             "When include_comment is true, set close_issue=true only if the user clearly asks to close the issue. "
             "For bug issues, provide clear, numbered reproduction steps in steps_to_reproduce. "
             "For feature issues, provide implementation guidance in steps_to_reproduce. "
+            "Use warnings for missing, weak, ambiguous, or non-verified information that the user should review before submitting. "
+            "If there are no warnings, return both warning groups as empty arrays. "
             f"{language_law} "
             f"{markdown_links_law} "
             f"{verification_law} "
@@ -634,6 +888,7 @@ class IssueAgentService:
             f"{backend_blockchain_law} "
             f"{backend_exchange_law} "
             f"{comment_style_law} "
+            f"{warning_codes_law} "
             f"Writing law/style: {self.openai_style_law.strip() or 'Keep it concise and actionable.'}"
         )
         headers = {
@@ -682,6 +937,7 @@ class IssueAgentService:
         if isinstance(close_issue_raw, str):
             close_issue = close_issue_raw.strip().lower() in {"true", "1", "yes", "y", "si", "sí"}
         formatted_comment = str(parsed.get("comment", "")).strip() if include_comment else ""
+        warnings = self._normalize_draft_warnings(parsed.get("warnings", {}))
         if include_comment:
             formatted_comment = self._format_issue_comment(
                 comment=formatted_comment,
@@ -694,6 +950,7 @@ class IssueAgentService:
             "steps_to_reproduce": str(parsed.get("steps_to_reproduce", "")).strip(),
             "comment": formatted_comment,
             "close_issue": close_issue,
+            "warnings": warnings,
         }
 
     def generate_issue(
@@ -706,6 +963,7 @@ class IssueAgentService:
         comment_issue_number: str = "",
         as_new_feature: bool = False,
         as_third_party: bool = False,
+        enrich_links: bool = False,
     ) -> Dict[str, Any]:
         self._maybe_weekly_cleanup()
         issue_type = self._normalize_issue_type(issue_type)
@@ -720,6 +978,7 @@ class IssueAgentService:
             include_comment=bool(include_comment),
             as_new_feature=bool(as_new_feature),
             as_third_party=bool(as_third_party),
+            enrich_links=bool(enrich_links),
             comment_issue_number=comment_issue_number or "-",
         )
 
@@ -743,8 +1002,43 @@ class IssueAgentService:
         )
 
         generated_input = user_input
+        draft_warnings = self._empty_draft_warnings()
         if as_new_feature:
-            generated_input = self._build_new_feature_description(user_input)
+            enrichment: Dict[str, str] = {}
+            if enrich_links:
+                enrichment_urls = self._extract_enrichment_urls(user_input)
+                self._debug(
+                    "New feature link enrichment evaluated",
+                    requested=bool(enrich_links),
+                    candidate_urls=len(enrichment_urls),
+                    repo=repo,
+                )
+                if enrichment_urls:
+                    try:
+                        enriched = self._enrich_new_feature_from_links(user_input=user_input, repo=repo, urls=enrichment_urls)
+                        enrichment = {
+                            key: value
+                            for key, value in dict(enriched.get("fields", {})).items()
+                            if str(value or "").strip()
+                        }
+                        for warning in enriched.get("warnings", []) if isinstance(enriched.get("warnings", []), list) else []:
+                            text = str(warning or "").strip()
+                            if text:
+                                self._append_draft_warning_message(draft_warnings, "source", text)
+                    except Exception as err:
+                        message = "No se ha podido enriquecer la solicitud desde las URLs aportadas."
+                        self._append_draft_warning_message(draft_warnings, "source", message)
+                        self.logger.warning("Issue flow: %s", message)
+                else:
+                    self._append_draft_warning_message(
+                        draft_warnings,
+                        "source",
+                        DRAFT_WARNING_MESSAGES["source"]["no_valid_external_links"],
+                    )
+            generated_input = self._build_new_feature_description(
+                enrichment.pop("info", user_input) or user_input,
+                enrichment=enrichment,
+            )
 
         generated = self._call_openai_issue_writer(
             user_input=generated_input,
@@ -755,6 +1049,10 @@ class IssueAgentService:
             comment_issue_number=comment_issue_number,
             is_new_feature=as_new_feature,
         )
+        normalized_generated_warnings = self._normalize_draft_warnings(generated.get("warnings", {}))
+        for group in DEFAULT_DRAFT_WARNING_GROUPS:
+            for message in normalized_generated_warnings.get(group, []):
+                self._append_draft_warning_message(draft_warnings, group, message)
         if as_new_feature:
             generated["description"] = generated_input
         if as_new_feature:
@@ -843,6 +1141,7 @@ class IssueAgentService:
             "description": generated["description"],
             "steps_to_reproduce": generated.get("steps_to_reproduce", ""),
             "comment": generated["comment"],
+            "draft_warnings": draft_warnings,
             "issue_type": issue_type,
             "repo": repo,
             "unit": unit,
@@ -854,6 +1153,7 @@ class IssueAgentService:
             "is_evm": self._infer_is_evm_from_text(user_input) if issue_type == "blockchain" else None,
             "as_new_feature": bool(as_new_feature),
             "as_third_party": bool(as_third_party),
+            "enrich_links": bool(enrich_links),
         }
         self._append_event("issue_generated", issue_id=issue["issue_id"])
         self._persist_status({"ok": True, "message": "Issue generated", "updated_at": datetime.now().isoformat()})

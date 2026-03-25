@@ -71,6 +71,26 @@ class IssueUiBehaviorTests(unittest.TestCase):
         self.assertIn("Comment body is required before submit", html)
         self.assertIn("Validation failed: comment body cannot be empty.", html)
 
+    def test_issue_ui_contains_link_enrichment_toggle_and_draft_warnings(self) -> None:
+        response = self.client.get("/ui?secret=top-secret")
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        self.assertIn('id="issueEnrichLinksRow"', html)
+        self.assertIn('id="issueEnrichLinks"', html)
+        self.assertIn("Enrich from detected links", html)
+        self.assertIn("function updateIssueLinkEnrichmentControl()", html)
+        self.assertIn("function getIssueDetectedLinkCandidates()", html)
+        self.assertIn("enrich_links: asNewFeature && enrichLinks", html)
+        self.assertIn('id="issueDraftWarningsWrap"', html)
+        self.assertIn('id="issueDraftSourceWarningsWrap"', html)
+        self.assertIn('id="issueDraftSourceWarnings"', html)
+        self.assertIn('id="issueDraftUserWarningsWrap"', html)
+        self.assertIn('id="issueDraftUserWarnings"', html)
+        self.assertIn("function normalizeIssueDraftWarnings(", html)
+        self.assertIn("Warnings from provided links", html)
+        self.assertIn("Warnings from missing user input", html)
+        self.assertIn("Review draft warnings", html)
+
 
 if __name__ == "__main__":
     unittest.main()

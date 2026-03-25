@@ -27,6 +27,7 @@ class _FakeIssueService:
         comment_issue_number="",
         as_new_feature=False,
         as_third_party=False,
+        enrich_links=False,
     ):
         self.last_generate_call = {
             "user_input": user_input,
@@ -37,6 +38,7 @@ class _FakeIssueService:
             "comment_issue_number": comment_issue_number,
             "as_new_feature": as_new_feature,
             "as_third_party": as_third_party,
+            "enrich_links": enrich_links,
         }
         return {
             "issue_id": "issue-test-1",
@@ -100,6 +102,23 @@ class IssueRouterMappingTests(unittest.TestCase):
         self.assertEqual(service.last_generate_call["repo"], "management")
         self.assertTrue(service.last_generate_call["as_new_feature"])
         self.assertFalse(service.last_generate_call["as_third_party"])
+
+    def test_generate_forwards_link_enrichment_flag(self) -> None:
+        client, service = self._build_client()
+        response = client.post(
+            "/issue-agent/generate?secret=top-secret",
+            json={
+                "user_input": "Integrate https://docs.example.com/api",
+                "issue_type": "new feature",
+                "repo": "frontend",
+                "unit": "customer",
+                "include_comment": False,
+                "comment_issue_number": "",
+                "enrich_links": True,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(service.last_generate_call["enrich_links"])
 
     def test_generate_maps_third_party_feature_to_management_flow(self) -> None:
         client, service = self._build_client()

@@ -20,6 +20,7 @@ class GenerateIssueRequest(BaseModel):
     comment_issue_number: str = ""
     as_new_feature: bool = False
     as_third_party: bool = False
+    enrich_links: bool = False
 
 
 class SubmitIssueRequest(BaseModel):
@@ -126,6 +127,7 @@ def create_issue_router(
                 comment_issue_number=req.comment_issue_number,
                 as_new_feature=as_new_feature,
                 as_third_party=as_third_party,
+                enrich_links=req.enrich_links,
             )
             logger.info("Issue generated via API (issue_id=%s)", item.get("issue_id", ""))
             return {"ok": True, "item": item}

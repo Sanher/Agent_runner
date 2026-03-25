@@ -640,6 +640,14 @@ def create_ui_router(job_secret: str) -> APIRouter:
       <div id=\"issueUserInputRow\">
         <textarea id=\"issueUserInput\" class=\"field\" style=\"min-height:130px\" placeholder=\"Information\"></textarea>
       </div>
+      <div id=\"issueEnrichLinksRow\" style=\"display:none;\">
+        <label class=\"issue-toggle\" for=\"issueEnrichLinks\">
+          <input type=\"checkbox\" id=\"issueEnrichLinks\" class=\"issue-toggle-input\" />
+          <span class=\"issue-toggle-track\" aria-hidden=\"true\"><span class=\"issue-toggle-knob\"></span></span>
+          <span id=\"issueEnrichLinksLabel\" class=\"issue-toggle-label\">Enrich from detected links</span>
+        </label>
+        <div class=\"muted\">Uses detected external links to complete the new-feature template when the information can be verified.</div>
+      </div>
       <button onclick=\"generateIssueDraft()\" id=\"issueGenerateBtn\">Generate draft</button>
       <div id=\"issueGenerateStatus\" class=\"muted\"></div>
       <div id=\"issueDraftRuntimeGrid\" class=\"issue-runtime-grid\" style=\"display:none;\">
@@ -655,6 +663,17 @@ def create_ui_router(job_secret: str) -> APIRouter:
           <div id=\"issueDraftStepsRow\" style=\"display:none;\">
             <label class=\"muted\">Draft steps to reproduce (editable, bug only)</label>
             <textarea id=\"issueDraftSteps\" class=\"field\" style=\"min-height:110px\" placeholder=\"1. Go to ...&#10;2. Click ...&#10;3. See ...\"></textarea>
+          </div>
+          <div id=\"issueDraftWarningsWrap\" style=\"display:none;\">
+            <label class=\"muted\">Draft warnings</label>
+            <div id=\"issueDraftSourceWarningsWrap\" style=\"display:none; margin-bottom:8px;\">
+              <div class=\"muted\">Warnings from provided links</div>
+              <div id=\"issueDraftSourceWarnings\" class=\"logs\">No source warnings.</div>
+            </div>
+            <div id=\"issueDraftUserWarningsWrap\" style=\"display:none;\">
+              <div class=\"muted\">Warnings from missing user input</div>
+              <div id=\"issueDraftUserWarnings\" class=\"logs\">No user warnings.</div>
+            </div>
           </div>
           <button onclick=\"submitIssueDraft()\" id=\"issueSubmitBtn\">Run in Playwright</button>
           <button onclick=\"clearIssueDraft()\" id=\"issueClearDraftBtn\">Clear suggestion (mark as done)</button>
@@ -1263,6 +1282,85 @@ function toggleIssueMode() {
     commentNumber.disabled = true;
     if (userInput) userInput.placeholder = 'Information';
   }
+  updateIssueLinkEnrichmentControl();
+}
+
+function issueExtractUrls(text) {
+  const matches = String(text || '').match(/https?:\\/\\/[^ <>()"']+/gi) || [];
+  const unique = [];
+  const seen = new Set();
+  matches.forEach((raw) => {
+    const candidate = String(raw || '').trim().replace(/[.,);:]+$/, '');
+    if (!candidate || seen.has(candidate)) return;
+    seen.add(candidate);
+    unique.push(candidate);
+  });
+  return unique;
+}
+
+function normalizeIssueDraftWarnings(raw) {
+  // Keep source-derived warnings separate from missing-user-input warnings so the
+  // draft review step makes it obvious what comes from provided links vs. missing context.
+  const normalized = {source: [], user: []};
+  if (Array.isArray(raw)) {
+    normalized.source = raw.map((item) => String(item || '').trim()).filter(Boolean);
+    return normalized;
+  }
+  if (raw && typeof raw === 'object') {
+    normalized.source = Array.isArray(raw.source)
+      ? raw.source.map((item) => String(item || '').trim()).filter(Boolean)
+      : [];
+    normalized.user = Array.isArray(raw.user)
+      ? raw.user.map((item) => String(item || '').trim()).filter(Boolean)
+      : [];
+  }
+  return normalized;
+}
+
+function issueIsLocalOrPrivateHost(hostname) {
+  const host = String(hostname || '').trim().toLowerCase().replaceAll('[', '').replaceAll(']', '');
+  if (!host) return true;
+  if (host === 'localhost' || host === '::1' || host.endsWith('.local')) return true;
+  if (host.startsWith('127.') || host.startsWith('10.') || host.startsWith('192.168.')) return true;
+  const hostParts = host.split('.');
+  if (hostParts.length >= 2 && hostParts[0] === '172') {
+    const second = Number(hostParts[1]);
+    if (second >= 16 && second <= 31) return true;
+  }
+  return false;
+}
+
+function getIssueDetectedLinkCandidates() {
+  const input = document.getElementById('issueUserInput');
+  return issueExtractUrls((input && input.value) || '').filter((url) => {
+    try {
+      return !issueIsLocalOrPrivateHost(new URL(url).hostname);
+    } catch (_) {
+      return false;
+    }
+  });
+}
+
+function updateIssueLinkEnrichmentControl() {
+  const row = document.getElementById('issueEnrichLinksRow');
+  const toggle = document.getElementById('issueEnrichLinks');
+  const label = document.getElementById('issueEnrichLinksLabel');
+  const addComment = document.getElementById('issueAddAsComment');
+  const issueType = document.getElementById('issueIssueType');
+  const shouldOffer = !!issueType
+    && !((addComment && addComment.checked) || false)
+    && String(issueType.value || '').trim().toLowerCase() === 'new feature';
+  const urls = shouldOffer ? getIssueDetectedLinkCandidates() : [];
+  if (row) row.style.display = urls.length ? 'block' : 'none';
+  if (toggle) {
+    toggle.disabled = urls.length === 0;
+    if (!urls.length) toggle.checked = false;
+  }
+  if (label) {
+    label.innerText = urls.length
+      ? `Enrich from detected links (${urls.length})`
+      : 'Enrich from detected links';
+  }
 }
 
 function clearIssuePlaywrightLog(hidePanel = false) {
@@ -1455,9 +1553,18 @@ function renderIssueDraftEditor() {
   const descriptionLabel = document.getElementById('issueDraftDescriptionLabel');
   const stepsRow = document.getElementById('issueDraftStepsRow');
   const steps = document.getElementById('issueDraftSteps');
+  const warningsWrap = document.getElementById('issueDraftWarningsWrap');
+  const sourceWarningsWrap = document.getElementById('issueDraftSourceWarningsWrap');
+  const sourceWarningsBox = document.getElementById('issueDraftSourceWarnings');
+  const userWarningsWrap = document.getElementById('issueDraftUserWarningsWrap');
+  const userWarningsBox = document.getElementById('issueDraftUserWarnings');
   const issueType = String((currentIssue && currentIssue.issue_type) || '').trim().toLowerCase();
   const isCommentMode = !!currentIssue.include_comment && !!String(currentIssue.comment_issue_number || '').trim();
   const showSteps = issueType === 'bug';
+  const draftWarnings = normalizeIssueDraftWarnings(currentIssue.draft_warnings);
+  const sourceWarnings = Array.isArray(draftWarnings.source) ? draftWarnings.source : [];
+  const userWarnings = Array.isArray(draftWarnings.user) ? draftWarnings.user : [];
+  const hasWarnings = sourceWarnings.length || userWarnings.length;
   if (title) title.value = String(currentIssue.title || '');
   if (titleRow) titleRow.style.display = isCommentMode ? 'none' : 'block';
   if (descriptionLabel) {
@@ -1471,6 +1578,15 @@ function renderIssueDraftEditor() {
   }
   if (stepsRow) stepsRow.style.display = showSteps ? 'block' : 'none';
   if (steps) steps.value = showSteps ? String(currentIssue.steps_to_reproduce || '') : '';
+  if (warningsWrap) warningsWrap.style.display = hasWarnings ? 'block' : 'none';
+  if (sourceWarningsWrap) sourceWarningsWrap.style.display = sourceWarnings.length ? 'block' : 'none';
+  if (sourceWarningsBox) sourceWarningsBox.innerText = sourceWarnings.length
+    ? sourceWarnings.map((item) => `- ${item}`).join('\n')
+    : 'No source warnings.';
+  if (userWarningsWrap) userWarningsWrap.style.display = userWarnings.length ? 'block' : 'none';
+  if (userWarningsBox) userWarningsBox.innerText = userWarnings.length
+    ? userWarnings.map((item) => `- ${item}`).join('\n')
+    : 'No user warnings.';
   box.style.display = 'block';
   if (runtimeGrid) runtimeGrid.style.display = 'grid';
   if (!issueLogToggleAllowed) setIssueLogToggle(false, false);
@@ -1509,11 +1625,14 @@ function clearIssueDraft() {
   const issueGenerateStatus = document.getElementById('issueGenerateStatus');
   const issueUserInput = document.getElementById('issueUserInput');
   const issueCommentNumber = document.getElementById('issueCommentNumber');
+  const issueEnrichLinks = document.getElementById('issueEnrichLinks');
   if (issueSubmitStatus) issueSubmitStatus.innerText = '';
   if (issueGenerateStatus) issueGenerateStatus.innerText = 'Draft cleared manually';
   if (issueUserInput) issueUserInput.value = '';
   if (issueCommentNumber) issueCommentNumber.value = '';
+  if (issueEnrichLinks) issueEnrichLinks.checked = false;
   setIssueLogToggle(false, false);
+  updateIssueLinkEnrichmentControl();
   renderIssueDraftEditor();
   setStatus('Todo OK: draft cleared manually and marked as done');
   setTimeout(() => {
@@ -1893,6 +2012,7 @@ async function generateIssueDraft() {
   let repo = document.getElementById('issueRepo').value;
   const unit = document.getElementById('issueUnit').value;
   const includeComment = !!document.getElementById('issueAddAsComment').checked;
+  const enrichLinks = !!document.getElementById('issueEnrichLinks')?.checked;
   let asNewFeature = false;
   let asThirdParty = false;
   const commentNumber = document.getElementById('issueCommentNumber').value.trim();
@@ -1942,17 +2062,26 @@ async function generateIssueDraft() {
         include_comment: includeComment,
         comment_issue_number: commentNumber,
         as_new_feature: asNewFeature,
-        as_third_party: asThirdParty
+        as_third_party: asThirdParty,
+        enrich_links: asNewFeature && enrichLinks
       })
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
     currentIssue = data.item || null;
-    document.getElementById('issueGenerateStatus').innerText = `Draft generated: ${currentIssue && currentIssue.issue_id ? currentIssue.issue_id : 'unknown'}`;
+    const draftWarnings = normalizeIssueDraftWarnings((currentIssue && currentIssue.draft_warnings) || {});
+    const draftWarningCount = (draftWarnings.source || []).length + (draftWarnings.user || []).length;
+    document.getElementById('issueGenerateStatus').innerText = draftWarningCount
+      ? `Draft generated with ${draftWarningCount} warning(s): ${currentIssue && currentIssue.issue_id ? currentIssue.issue_id : 'unknown'}`
+      : `Draft generated: ${currentIssue && currentIssue.issue_id ? currentIssue.issue_id : 'unknown'}`;
     document.getElementById('issueSubmitStatus').innerText = '';
     clearIssuePlaywrightLog(true);
     setIssueLogToggle(false, false);
     appendIssuePlaywrightLog('Draft generated and ready for review.');
+    if (draftWarningCount) {
+      appendIssuePlaywrightLog('Draft generated with warnings; review the draft warnings before running Playwright.');
+      setStatus('Warning: draft generated with missing or non-verified fields. Review draft warnings.');
+    }
     renderIssueDraftEditor();
     if (includeComment) {
       document.getElementById('issueAddAsComment').checked = false;
@@ -2636,6 +2765,7 @@ async function loadReviewedSuggestions() {
 
 toggleIssueMode();
 document.getElementById('issueIssueType')?.addEventListener('change', () => toggleIssueMode());
+document.getElementById('issueUserInput')?.addEventListener('input', () => updateIssueLinkEnrichmentControl());
 showTab('workday');
 startWorkdayTicker();
 if (workdayPollTimer) clearInterval(workdayPollTimer);
