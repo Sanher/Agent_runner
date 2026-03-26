@@ -1581,11 +1581,11 @@ function renderIssueDraftEditor() {
   if (warningsWrap) warningsWrap.style.display = hasWarnings ? 'block' : 'none';
   if (sourceWarningsWrap) sourceWarningsWrap.style.display = sourceWarnings.length ? 'block' : 'none';
   if (sourceWarningsBox) sourceWarningsBox.innerText = sourceWarnings.length
-    ? sourceWarnings.map((item) => `- ${item}`).join('\n')
+    ? sourceWarnings.map((item) => `- ${item}`).join('\\n')
     : 'No source warnings.';
   if (userWarningsWrap) userWarningsWrap.style.display = userWarnings.length ? 'block' : 'none';
   if (userWarningsBox) userWarningsBox.innerText = userWarnings.length
-    ? userWarnings.map((item) => `- ${item}`).join('\n')
+    ? userWarnings.map((item) => `- ${item}`).join('\\n')
     : 'No user warnings.';
   box.style.display = 'block';
   if (runtimeGrid) runtimeGrid.style.display = 'grid';
