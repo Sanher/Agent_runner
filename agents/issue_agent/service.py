@@ -1934,6 +1934,27 @@ class IssueAgentService:
         else:
             self._debug("Skipping blockchain EVM label", is_evm=is_evm)
 
+    def _remove_frontend_task_template_label(self, page) -> Optional[str]:
+        try:
+            self._debug("Removing frontend task template label", label="enhancement")
+            self._dismiss_open_overlays(page)
+            edit_labels_button = page.locator("button").filter(has_text="Edit Labels").first
+            self._click_locator_resilient(edit_labels_button, timeout_ms=5000)
+            page.wait_for_timeout(250)
+            labels_filter = page.locator('input[aria-label="Filter labels"]').first
+            if labels_filter.count() > 0:
+                labels_filter.wait_for(state="visible", timeout=2000)
+                labels_filter.fill("enhancement")
+                page.wait_for_timeout(200)
+            self._click_option_by_text(page, "enhancement", timeout_ms=2500)
+            self._dismiss_open_overlays(page)
+            self._debug("Frontend task template label removed", label="enhancement")
+            return None
+        except Exception as err:
+            warning = f"Frontend task label cleanup failed: {err}"
+            self.logger.warning("Issue flow: %s", warning)
+            return warning
+
     def _apply_issue_type(self, page, issue_type: str) -> Optional[str]:
         # Force GitHub issue type to match the requested workflow semantics.
         mapping = {
@@ -2267,6 +2288,9 @@ class IssueAgentService:
             type_warning = self._apply_issue_type(page, "task")
             if type_warning:
                 self._append_issue_warning(issue, type_warning)
+            label_warning = self._remove_frontend_task_template_label(page)
+            if label_warning:
+                self._append_issue_warning(issue, label_warning)
 
         field_warnings = self._apply_post_creation_fields(
             page,

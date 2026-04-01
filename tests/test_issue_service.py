@@ -1029,12 +1029,14 @@ class IssueServiceTests(unittest.TestCase):
             svc = self._build_service(Path(tmp))
             page = _FrontendSubmitPage()
             applied_types: list[str] = []
+            removed_labels: list[str] = []
 
             svc._open_projects_editor = lambda _page: None
             svc._ensure_project_selected = lambda _page: None
             svc._click_create_and_wait_created = lambda *args, **kwargs: None
             svc._apply_post_creation_fields = lambda *args, **kwargs: []
             svc._apply_issue_type = lambda _page, issue_type: applied_types.append(issue_type) or None
+            svc._remove_frontend_task_template_label = lambda _page: removed_labels.append("enhancement") or None
 
             svc._submit_frontend_issue(
                 page,
@@ -1050,6 +1052,7 @@ class IssueServiceTests(unittest.TestCase):
             )
 
             self.assertEqual(["task"], applied_types)
+            self.assertEqual(["enhancement"], removed_labels)
 
 
 if __name__ == "__main__":
