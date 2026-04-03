@@ -117,6 +117,19 @@ class WorkdayAgentService:
         except Exception:
             return None
 
+    @staticmethod
+    def _timestamp_to_local_iso(value: Any) -> str:
+        try:
+            ts = float(value or 0)
+        except Exception:
+            return ""
+        if ts <= 0:
+            return ""
+        tzinfo = datetime.now().astimezone().tzinfo
+        if tzinfo is None:
+            return datetime.fromtimestamp(ts).isoformat(timespec="seconds")
+        return datetime.fromtimestamp(ts, tz=tzinfo).isoformat(timespec="seconds")
+
     def _maybe_prune_runtime_events(self) -> None:
         today = date.today().isoformat()
         if self._last_runtime_events_prune_day == today:
@@ -728,12 +741,32 @@ class WorkdayAgentService:
         # Step-by-step details stay in logs; webhooks are sent per event.
 
     def send_final(self, job_name: str, run_id: str, result: Dict[str, Any]):
+        meta = dict(result or {})
+        state = self._get_runtime_state()
+        if str(state.get("run_id", "")).strip() == run_id:
+            if self._safe_float(meta.get("planned_final_ts")) <= 0:
+                meta["planned_final_ts"] = state.get("planned_final_ts")
+            if self._safe_float(meta.get("final_click_ts")) <= 0:
+                meta["final_click_ts"] = state.get("final_click_ts")
+
+        scheduled_at = str(meta.get("scheduled_at", "") or "").strip() or self._timestamp_to_local_iso(meta.get("planned_final_ts"))
+        executed_at = str(meta.get("executed_at", "") or "").strip() or self._timestamp_to_local_iso(meta.get("final_click_ts"))
+        if scheduled_at:
+            meta["scheduled_at"] = scheduled_at
+        else:
+            meta.pop("scheduled_at", None)
+        if executed_at:
+            meta["executed_at"] = executed_at
+        else:
+            meta.pop("executed_at", None)
+
         payload = {
             "ok": result.get("ok", False),
+            "event": "workday_final",
             "job": job_name,
             "run_id": run_id,
             "message": f"[{job_name}] {'OK' if result.get('ok') else 'ERROR'}",
-            "meta": result,
+            "meta": meta,
         }
         log_fn = self.logger.info if result.get("ok") else self.logger.error
         log_fn("Final result %s/%s: %s", job_name, run_id, payload["message"])
@@ -1400,6 +1433,10 @@ class WorkdayAgentService:
                         "url": page.url,
                         "data_dir": str(self.data_dir),
                         "recovered": True,
+                        "planned_final_ts": final_ts,
+                        "final_click_ts": final_click_ts,
+                        "scheduled_at": self._timestamp_to_local_iso(final_ts),
+                        "executed_at": self._timestamp_to_local_iso(final_click_ts),
                     }
                     self._set_runtime_state(
                         "completed",
@@ -1410,6 +1447,7 @@ class WorkdayAgentService:
                         first_click_ts=first_click_ts,
                         start_break_ts=start_break_ts,
                         stop_break_ts=stop_break_ts,
+                        planned_final_ts=final_ts,
                         final_click_ts=final_click_ts,
                     )
                     self.send_final(job_name, run_id, result)
@@ -1429,6 +1467,8 @@ class WorkdayAgentService:
             latest_state = self._get_runtime_state()
             prev_phase = str(latest_state.get("phase", ""))
             retry_phase = prev_phase if prev_phase in self.ACTIVE_PHASES else ""
+            planned_final_ts = self._safe_float(latest_state.get("planned_final_ts"))
+            final_click_ts = self._safe_float(latest_state.get("final_click_ts"))
             if page is not None:
                 try:
                     page.screenshot(path=str(run_dir / "recovered_failed.png"), full_page=True)
@@ -1443,7 +1483,14 @@ class WorkdayAgentService:
                 "error": str(err),
                 "url": page.url if page is not None else "",
                 "recovered": True,
+                "planned_final_ts": planned_final_ts,
             }
+            scheduled_at = self._timestamp_to_local_iso(planned_final_ts)
+            executed_at = self._timestamp_to_local_iso(final_click_ts)
+            if scheduled_at:
+                result["scheduled_at"] = scheduled_at
+            if executed_at:
+                result["executed_at"] = executed_at
             self._set_runtime_state(
                 "failed",
                 "Workday failed during resume",
@@ -1760,6 +1807,10 @@ class WorkdayAgentService:
                     "run_id": run_id,
                     "url": page.url,
                     "data_dir": str(self.data_dir),
+                    "planned_final_ts": final_ts,
+                    "final_click_ts": final_click_ts,
+                    "scheduled_at": self._timestamp_to_local_iso(final_ts),
+                    "executed_at": self._timestamp_to_local_iso(final_click_ts),
                 }
                 self._set_runtime_state(
                     "completed",
@@ -1770,6 +1821,7 @@ class WorkdayAgentService:
                     first_click_ts=first_click_ts,
                     start_break_ts=start_break_ts,
                     stop_break_ts=stop_break_ts,
+                    planned_final_ts=final_ts,
                     final_click_ts=final_click_ts,
                 )
                 self.send_final(job_name, run_id, result)
@@ -1781,6 +1833,8 @@ class WorkdayAgentService:
                 latest_state = self._get_runtime_state()
                 prev_phase = str(latest_state.get("phase", ""))
                 retry_phase = prev_phase if prev_phase in self.ACTIVE_PHASES else ""
+                planned_final_ts = self._safe_float(latest_state.get("planned_final_ts"))
+                final_click_ts = self._safe_float(latest_state.get("final_click_ts"))
                 try:
                     snap("failed")
                 except Exception:
@@ -1791,7 +1845,14 @@ class WorkdayAgentService:
                     "run_id": run_id,
                     "error": str(err),
                     "url": page.url if "page" in locals() else "",
+                    "planned_final_ts": planned_final_ts,
                 }
+                scheduled_at = self._timestamp_to_local_iso(planned_final_ts)
+                executed_at = self._timestamp_to_local_iso(final_click_ts)
+                if scheduled_at:
+                    result["scheduled_at"] = scheduled_at
+                if executed_at:
+                    result["executed_at"] = executed_at
                 self._set_runtime_state(
                     "failed",
                     "Workday failed",
