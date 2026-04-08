@@ -1084,9 +1084,8 @@ class IssueAgentService:
                 )
         if repo == "frontend" and issue_type == "enhancement":
             title_text = generated["title"].strip()
-            generated["title"] = (
-                title_text if title_text.upper().startswith("[ENHACEMENT]") else f"[ENHACEMENT] {title_text}"
-            )
+            title_text = re.sub(r"^\s*\[(?:MEJORA|ENHACEMENT|ENHANCEMENT)\]\s*", "", title_text, flags=re.I).strip()
+            generated["title"] = f"[ENHACEMENT] {title_text}" if title_text else "[ENHACEMENT]"
         if repo == "frontend" and issue_type == "task":
             title_text = generated["title"].strip()
             generated["title"] = title_text if title_text.upper().startswith("[TASK]") else f"[TASK] {title_text}"
@@ -2244,8 +2243,9 @@ class IssueAgentService:
             title = f"[BUG] {title}"
         if issue_type == "feature" and not title.upper().startswith("[FEATURE]"):
             title = f"[FEATURE] {title}"
-        if issue_type == "enhancement" and not title.upper().startswith("[ENHACEMENT]"):
-            title = f"[ENHACEMENT] {title}"
+        if issue_type == "enhancement":
+            title = re.sub(r"^\s*\[(?:MEJORA|ENHACEMENT|ENHANCEMENT)\]\s*", "", title, flags=re.I).strip()
+            title = f"[ENHACEMENT] {title}" if title else "[ENHACEMENT]"
         if issue_type == "task" and not title.upper().startswith("[TASK]"):
             title = f"[TASK] {title}"
 
