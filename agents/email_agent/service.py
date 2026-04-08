@@ -194,12 +194,19 @@ class EmailAgentService:
         return bool(local and "." in domain)
 
     @staticmethod
+    def _sanitize_header_value(value: str) -> str:
+        return re.sub(r"[\r\n]+", " ", str(value or "")).strip()
+
+    @staticmethod
     def _reply_subject(subject: str) -> str:
-        clean_subject = str(subject or "").strip()
+        clean_subject = EmailAgentService._sanitize_header_value(subject)
+        while True:
+            updated = re.sub(r"^(?:(?:re|fw|fwd)\s*:\s*)+", "", clean_subject, flags=re.IGNORECASE).strip()
+            if updated == clean_subject:
+                break
+            clean_subject = updated
         if not clean_subject:
             return "RE: (no subject)"
-        if clean_subject.lower().startswith("re:"):
-            return clean_subject
         return f"RE: {clean_subject}"
 
     @staticmethod

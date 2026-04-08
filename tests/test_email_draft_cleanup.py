@@ -41,6 +41,18 @@ class EmailDraftCleanupTests(unittest.TestCase):
         cleaned = EmailAgentService._sanitize_generated_draft(raw)
         self.assertEqual(cleaned, raw)
 
+    def test_reply_subject_removes_line_breaks_from_header_value(self) -> None:
+        subject = EmailAgentService._reply_subject("Token update\r\nInjected header")
+        self.assertEqual(subject, "RE: Token update Injected header")
+
+    def test_reply_subject_collapses_existing_re_and_fw_prefixes(self) -> None:
+        subject = EmailAgentService._reply_subject("FW: Re: Fwd:   Token update")
+        self.assertEqual(subject, "RE: Token update")
+
+    def test_reply_subject_handles_only_prefixes_as_empty_subject(self) -> None:
+        subject = EmailAgentService._reply_subject("RE: FW: FWD:")
+        self.assertEqual(subject, "RE: (no subject)")
+
     def test_strip_trailing_signature_block_removes_template_or_plain_signature(self) -> None:
         template = "Best regards,\n{{logo}}\nDavid"
         plain = "Best regards,\nDavid"
