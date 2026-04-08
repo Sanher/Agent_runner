@@ -1584,17 +1584,22 @@ class IssueAgentService:
             add_parent_item.click(timeout=7000)
             page.locator('[data-testid="back-to-repo-selection-button"]').first.click(timeout=7000)
 
+            parent_repo_short = parent_repo.split("/")[-1].strip()
+            repo_search_term = (
+                "mana"
+                if parent_repo_short.lower() == "management"
+                else (parent_repo_short or parent_repo)
+            )
             repo_search = page.locator(
                 'input[aria-label*="repository" i], input[placeholder*="repository" i], input[aria-label*="Select repository" i]'
             ).first
             if repo_search.count() > 0:
-                repo_search.fill(parent_repo, timeout=7000)
+                repo_search.fill(repo_search_term, timeout=7000)
                 page.wait_for_timeout(700)
 
             try:
                 self._click_option_by_text(page, parent_repo, always_click=True, timeout_ms=7000)
             except Exception:
-                parent_repo_short = parent_repo.split("/")[-1].strip()
                 if parent_repo_short:
                     self._click_option_by_text(page, parent_repo_short, always_click=True, timeout_ms=7000)
                 else:
