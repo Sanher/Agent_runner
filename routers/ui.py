@@ -868,6 +868,16 @@ function setStatus(text) {
   }, 20000);
 }
 
+async function readApiPayload(response) {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch (_err) {
+    return {detail: text};
+  }
+}
+
 function phaseLabel(phase) {
   const map = {
     before_start: 'Before start',
@@ -2337,7 +2347,7 @@ async function sendSuggestion(id) {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({to_email, cc_email, body})
     });
-    const data = await r.json();
+    const data = await readApiPayload(r);
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
     const sentCc = data && data.item ? String(data.item.sent_cc || '') : '';
     setStatus(`Email sent to ${to_email}${sentCc ? ` (cc: ${sentCc})` : ''}`);

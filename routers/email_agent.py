@@ -150,6 +150,9 @@ def create_email_router(
             detail = str(err)
             status_code = 404 if detail.startswith("Suggestion not found:") else 400
             raise HTTPException(status_code=status_code, detail=detail) from err
+        except Exception as err:
+            logger.exception("Unhandled send error in email-agent (suggestion_id=%s)", suggestion_id)
+            raise HTTPException(status_code=500, detail=str(err)) from err
 
     @router.post("/suggestions/manual")
     def manual_suggestion(req: ManualSuggestionRequest, request: Request):

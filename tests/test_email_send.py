@@ -22,6 +22,8 @@ class _FakeEmailService:
             "body": body,
             "cc_email": cc_email,
         }
+        if suggestion_id == "boom":
+            raise ValueError("broken send")
         if suggestion_id == "missing":
             raise RuntimeError("Suggestion not found: missing")
         if to_email == "bad-email":
@@ -75,6 +77,16 @@ class EmailSendTests(unittest.TestCase):
             json={"to_email": "bad-email", "body": "hello"},
         )
         self.assertEqual(response.status_code, 400)
+
+    def test_send_suggestion_unhandled_error_returns_json_500(self) -> None:
+        client, _ = self._build_client()
+        response = client.post(
+            "/email-agent/suggestions/boom/send?secret=top-secret",
+            json={"to_email": "user@example.com", "body": "hello"},
+        )
+        self.assertEqual(response.status_code, 500)
+        payload = response.json()
+        self.assertEqual(payload["detail"], "broken send")
 
 
 if __name__ == "__main__":
