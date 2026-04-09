@@ -1,3 +1,4 @@
+import ast
 import json
 import ipaddress
 import re
@@ -412,6 +413,26 @@ class IssueAgentService:
             lines = [line for line in content.splitlines() if not line.strip().startswith("```")]
             content = "\n".join(lines).strip()
         return json.loads(content)
+
+    @staticmethod
+    def _coerce_multiline_text(raw: Any) -> str:
+        if isinstance(raw, (list, tuple)):
+            return "\n".join(str(item).strip() for item in raw if str(item).strip()).strip()
+
+        text = str(raw or "").strip()
+        if text.startswith("[") and text.endswith("]"):
+            parsed_value: Any = None
+            for parser in (json.loads, ast.literal_eval):
+                try:
+                    parsed_value = parser(text)
+                    break
+                except Exception:
+                    continue
+            if isinstance(parsed_value, (list, tuple)):
+                return "\n".join(
+                    str(item).strip() for item in parsed_value if str(item).strip()
+                ).strip()
+        return text
 
     @staticmethod
     def _empty_draft_warnings() -> Dict[str, List[str]]:
@@ -947,7 +968,9 @@ class IssueAgentService:
         return {
             "title": str(parsed.get("title", "")).strip(),
             "description": str(parsed.get("description", "")).strip(),
-            "steps_to_reproduce": str(parsed.get("steps_to_reproduce", "")).strip(),
+            "steps_to_reproduce": self._coerce_multiline_text(
+                parsed.get("steps_to_reproduce", "")
+            ),
             "comment": formatted_comment,
             "close_issue": close_issue,
             "warnings": warnings,
@@ -1413,11 +1436,36 @@ class IssueAgentService:
         return mapping.get(key, "Frontend")
 
     def _click_option_by_text(self, page, text: str, always_click: bool = False, timeout_ms: int = 6000) -> None:
-        option = page.locator("li[role='option']").filter(has_text=text).first
-        option.wait_for(state="visible", timeout=timeout_ms)
-        selected = option.get_attribute("aria-selected")
-        if always_click or selected != "true":
-            option.click(timeout=timeout_ms)
+        target_text = str(text or "").strip()
+        exact_match = re.compile(rf"^{re.escape(target_text)}$", re.IGNORECASE)
+        partial_match = re.compile(re.escape(target_text), re.IGNORECASE)
+        candidates = [
+            page.locator("li[role='option']").filter(has_text=exact_match).first,
+            page.locator("li[role='menuitem']").filter(has_text=exact_match).first,
+            page.locator("button[role='option']").filter(has_text=exact_match).first,
+            page.locator("li[role='option']").filter(has_text=partial_match).first,
+            page.locator("li[role='menuitem']").filter(has_text=partial_match).first,
+            page.locator("button[role='option']").filter(has_text=partial_match).first,
+        ]
+
+        last_error: Optional[Exception] = None
+        for option in candidates:
+            try:
+                option.wait_for(state="visible", timeout=timeout_ms)
+                selected = option.get_attribute("aria-selected")
+                if always_click or selected != "true":
+                    try:
+                        option.click(timeout=timeout_ms)
+                    except Exception:
+                        option.click(timeout=timeout_ms, force=True)
+                return
+            except Exception as err:
+                last_error = err
+                continue
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(f"Option not found: {text}")
 
     @staticmethod
     def _dismiss_open_overlays(page) -> None:
@@ -1582,27 +1630,45 @@ class IssueAgentService:
             add_parent_item.wait_for(state="visible", timeout=7000)
             add_parent_item.click(timeout=7000)
             page.locator('[data-testid="back-to-repo-selection-button"]').first.click(timeout=7000)
+            page.wait_for_timeout(400)
 
-            parent_repo_short = parent_repo.split("/")[-1].strip()
-            repo_search_term = (
-                "mana"
-                if parent_repo_short.lower() == "management"
-                else (parent_repo_short or parent_repo)
-            )
+            repo_search_term, selection_targets = self._parent_repo_search_strategy(parent_repo)
             repo_search = page.locator(
                 'input[aria-label*="repository" i], input[placeholder*="repository" i], input[aria-label*="Select repository" i]'
             ).first
             if repo_search.count() > 0:
+                repo_search.wait_for(state="visible", timeout=7000)
+                try:
+                    repo_search.click(timeout=3000)
+                except Exception:
+                    pass
+                try:
+                    repo_search.fill("", timeout=3000)
+                except Exception:
+                    pass
                 repo_search.fill(repo_search_term, timeout=7000)
-                page.wait_for_timeout(700)
+                page.wait_for_timeout(1200)
 
-            try:
-                self._click_option_by_text(page, parent_repo, always_click=True, timeout_ms=7000)
-            except Exception:
-                if parent_repo_short:
-                    self._click_option_by_text(page, parent_repo_short, always_click=True, timeout_ms=7000)
-                else:
-                    raise
+            selection_error: Optional[Exception] = None
+            selected_parent_repo = False
+            for selection_target in selection_targets:
+                try:
+                    self._click_option_by_text(
+                        page,
+                        selection_target,
+                        always_click=True,
+                        timeout_ms=7000,
+                    )
+                    selected_parent_repo = True
+                    break
+                except Exception as err:
+                    selection_error = err
+                    continue
+
+            if not selected_parent_repo:
+                if selection_error is not None:
+                    raise selection_error
+                raise RuntimeError(f"Unable to select parent repository: {parent_repo}")
 
             page.wait_for_timeout(2500)
             issue_search = page.locator('input[aria-label="Search issues"], input[placeholder*="Search issues"]').first
@@ -1626,6 +1692,27 @@ class IssueAgentService:
                 f"Parent relationship failed (repo={repo_key}, parent_repo={parent_repo}, "
                 f"parent_issue={parent_issue_number}): {err}"
             )
+
+    @staticmethod
+    def _parent_repo_search_strategy(parent_repo: str) -> tuple[str, List[str]]:
+        parent_repo_text = str(parent_repo or "").strip()
+        parent_repo_short = parent_repo_text.split("/")[-1].strip()
+        repo_search_term = (
+            "mana"
+            if parent_repo_short.lower() == "management"
+            else (parent_repo_short or parent_repo_text)
+        )
+        selection_targets = (
+            [parent_repo_short, parent_repo_text]
+            if parent_repo_short.lower() == "management"
+            else [parent_repo_text, parent_repo_short]
+        )
+        deduped_targets: List[str] = []
+        for value in selection_targets:
+            text = str(value or "").strip()
+            if text and text not in deduped_targets:
+                deduped_targets.append(text)
+        return repo_search_term, deduped_targets
 
     def _ensure_project_post_fields_visible(self, page) -> bool:
         # GitHub project metadata can be collapsed right after create.
@@ -1950,7 +2037,12 @@ class IssueAgentService:
                 labels_filter.wait_for(state="visible", timeout=2000)
                 labels_filter.fill("enhancement")
                 page.wait_for_timeout(200)
-            self._click_option_by_text(page, "enhancement", timeout_ms=2500)
+            self._click_option_by_text(
+                page,
+                "enhancement",
+                always_click=True,
+                timeout_ms=3500,
+            )
             self._dismiss_open_overlays(page)
             self._debug("Frontend task template label removed", label="enhancement")
             return None
