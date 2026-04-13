@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import shutil
 import sys
 import threading
 import time
@@ -59,6 +60,15 @@ def _resolve_data_dir() -> Path:
 DATA_DIR = _resolve_data_dir()
 
 
+def _path_is_within(parent: Path, candidate: Path) -> bool:
+    """Devuelve True si candidate cuelga de parent una vez resueltos ambos."""
+    try:
+        candidate.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def _load_addon_options() -> Dict[str, Any]:
     """Carga opciones desde DATA_DIR/options.json cuando existe."""
     options_path = DATA_DIR / "options.json"
@@ -113,6 +123,19 @@ def _setting_values_with_aliases(name: str, aliases: list[str]) -> List[str]:
         if value and value not in values:
             values.append(value)
     return values
+
+
+def _setting_is_explicit(name: str, aliases: list[str] | None = None) -> bool:
+    """Devuelve True si el usuario ha definido el setting por ENV u options.json."""
+    keys = [name, *(aliases or [])]
+    for key in keys:
+        env_name = key.upper()
+        if env_name in os.environ:
+            return True
+        raw = ADDON_OPTIONS.get(key.lower(), "")
+        if str(raw or "").strip():
+            return True
+    return False
 
 
 def _setting_int(name: str, default: int) -> int:
@@ -270,7 +293,16 @@ ISSUE_BUG_PARENT_ISSUE_BACKEND = _setting_with_aliases(
 ISSUE_BUG_PARENT_ISSUE_MANAGEMENT = _setting("issue_bug_parent_issue_management", "")
 
 # Agente respuestas (Telegram)
-DEFAULT_ANSWERS_DATA_DIR = (Path(__file__).resolve().parent / "answers_agent" / "data").resolve()
+DEFAULT_ANSWERS_DATA_DIR = (DATA_DIR / "answers_agent").resolve()
+LEGACY_ANSWERS_DATA_DIR = (Path(__file__).resolve().parent / "answers_agent" / "data").resolve()
+ANSWERS_STATE_FILE_DEFAULTS: Dict[str, Any] = {
+    "conversations.json": {"users": {}},
+    "review_state.json": {"chats": {}},
+    "archived_chats.json": {"items": []},
+    "pending_issues.json": {"issues": []},
+    "blocked_users.json": {"blocked": []},
+    "spam_patterns.json": {"items": []},
+}
 ANSWERS_DATA_DIR = Path(
     _setting("answers_data_dir", str(DEFAULT_ANSWERS_DATA_DIR))
 ).expanduser()
@@ -295,6 +327,99 @@ ANSWERS_TELEGRAM_WEBHOOK_SECRETS = _setting_values_with_aliases(
     ["telegram_webhook_secret", "answers_webhook_secret"],
 )
 ANSWERS_TELEGRAM_WEBHOOK_SECRET = ANSWERS_TELEGRAM_WEBHOOK_SECRETS[0] if ANSWERS_TELEGRAM_WEBHOOK_SECRETS else ""
+
+
+def _answers_dir_has_meaningful_data(path: Path) -> bool:
+    """Return True when the answers data directory already contains non-default state."""
+    for file_name, default_payload in ANSWERS_STATE_FILE_DEFAULTS.items():
+        file_path = path / file_name
+        if not file_path.exists():
+            continue
+        try:
+            payload = json.loads(file_path.read_text(encoding="utf-8"))
+        except Exception:
+            return True
+        if payload != default_payload:
+            return True
+    return False
+
+
+def _migrate_answers_data_dir_if_needed(target_dir: Path) -> None:
+    """Copy legacy answers state into the canonical data dir when the user did not override it."""
+    if _setting_is_explicit("answers_data_dir"):
+        logger.info(
+            "ANSWERS_DATA_DIR was set explicitly to %s; automatic legacy migration is skipped",
+            target_dir,
+        )
+        return
+
+    if not LEGACY_ANSWERS_DATA_DIR.exists():
+        logger.info(
+            "Legacy Answers data directory not found at %s; no automatic migration needed",
+            LEGACY_ANSWERS_DATA_DIR,
+        )
+        return
+
+    if _answers_dir_has_meaningful_data(target_dir):
+        logger.info(
+            "Legacy Answers data directory detected at %s but not migrated because %s already has data",
+            LEGACY_ANSWERS_DATA_DIR,
+            target_dir,
+        )
+        return
+
+    files_to_copy = [
+        file_name
+        for file_name in ANSWERS_STATE_FILE_DEFAULTS
+        if (LEGACY_ANSWERS_DATA_DIR / file_name).exists()
+    ]
+    if not files_to_copy:
+        logger.info(
+            "Legacy Answers data directory detected at %s but no known state files were found",
+            LEGACY_ANSWERS_DATA_DIR,
+        )
+        return
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    copied_files: List[str] = []
+    failed_files: List[str] = []
+    for file_name in files_to_copy:
+        source = LEGACY_ANSWERS_DATA_DIR / file_name
+        destination = target_dir / file_name
+        try:
+            shutil.copy2(source, destination)
+            copied_files.append(file_name)
+        except OSError:
+            failed_files.append(file_name)
+            logger.exception(
+                "Failed to copy legacy Answers state file %s to %s",
+                source,
+                destination,
+            )
+
+    if copied_files:
+        logger.info(
+            "Migrated legacy Answers state from %s to %s (%s)",
+            LEGACY_ANSWERS_DATA_DIR,
+            target_dir,
+            ", ".join(copied_files),
+        )
+    if failed_files:
+        logger.warning(
+            "Legacy Answers migration completed with copy failures for: %s",
+            ", ".join(failed_files),
+        )
+
+
+_migrate_answers_data_dir_if_needed(ANSWERS_DATA_DIR)
+
+if not _path_is_within(DATA_DIR, ANSWERS_DATA_DIR):
+    logger.warning(
+        "ANSWERS_DATA_DIR=%s está fuera de DATA_DIR=%s; en despliegues Home Assistant/Supervisor "
+        "esto puede dejar el estado de answers fuera del almacenamiento persistente esperado",
+        ANSWERS_DATA_DIR,
+        DATA_DIR,
+    )
 
 
 def _apply_timezone() -> None:
@@ -492,6 +617,7 @@ def _answers_health_payload() -> Dict[str, Any]:
         "has_openai_api_key": bool(ANSWERS_OPENAI_API_KEY),
         "has_openai_model": bool(ANSWERS_OPENAI_MODEL),
         "data_dir": str(ANSWERS_DATA_DIR),
+        "data_dir_within_persistent_data_dir": _path_is_within(DATA_DIR, ANSWERS_DATA_DIR),
     }
 
 
