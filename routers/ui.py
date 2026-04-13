@@ -1,4 +1,6 @@
 import logging
+import subprocess
+from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
@@ -6,6 +8,28 @@ from fastapi.responses import HTMLResponse
 from routers.auth import ensure_request_authorized
 
 logger = logging.getLogger("agent_runner.ui_router")
+
+
+def _resolve_ui_version() -> str:
+    repo_root = Path(__file__).resolve().parents[1]
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=1.5,
+        )
+        version = result.stdout.strip()
+        if version:
+            return version
+    except Exception:  # pragma: no cover - best effort only
+        pass
+    return "local build"
+
+
+UI_VERSION = _resolve_ui_version()
 
 
 def create_ui_router(job_secret: str) -> APIRouter:
@@ -39,69 +63,99 @@ def create_ui_router(job_secret: str) -> APIRouter:
     }
 
     :root {
-      --bg: #020617;
-      --bg-soft: #0f172a;
-      --text: #e2e8f0;
-      --muted: #94a3b8;
-      --card-bg: rgba(15, 23, 42, 0.84);
-      --card-border: rgba(148, 163, 184, 0.22);
-      --input-bg: rgba(15, 23, 42, 0.78);
-      --input-border: rgba(148, 163, 184, 0.32);
-      --input-focus: #38bdf8;
-      --button-bg: linear-gradient(135deg, #2563eb, #7c3aed);
-      --button-hover: linear-gradient(135deg, #1d4ed8, #6d28d9);
-      --button-text: #f8fafc;
-      --shadow: 0 18px 35px rgba(2, 6, 23, 0.45);
+      --bg-app: #0a090b;
+      --bg-panel: #151417;
+      --bg-panel-soft: #1d1b20;
+      --bg-elevated: #262229;
+      --border-soft: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(249, 115, 22, 0.26);
+      --text-strong: #f7f1ea;
+      --text-muted: #a79d95;
+      --accent: #f97316;
+      --accent-soft: rgba(249, 115, 22, 0.14);
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --shadow-panel: 0 24px 60px rgba(0, 0, 0, 0.42);
+
+      --bg: var(--bg-app);
+      --bg-soft: var(--bg-panel);
+      --text: var(--text-strong);
+      --muted: var(--text-muted);
+      --card-bg: linear-gradient(180deg, rgba(24, 23, 27, 0.98) 0%, rgba(18, 18, 22, 0.98) 100%);
+      --card-border: var(--border-soft);
+      --input-bg: rgba(14, 14, 18, 0.94);
+      --input-border: rgba(255, 255, 255, 0.1);
+      --input-focus: var(--accent);
+      --button-bg: linear-gradient(135deg, #fb923c 0%, #ea580c 100%);
+      --button-hover: linear-gradient(135deg, #fdba74 0%, #f97316 100%);
+      --button-text: #fff7ed;
+      --shadow: var(--shadow-panel);
     }
 
     :root[data-theme='light'] {
-      --bg: #f1f5f9;
-      --bg-soft: #ffffff;
-      --text: #0f172a;
-      --muted: #475569;
-      --card-bg: rgba(255, 255, 255, 0.95);
-      --card-border: rgba(148, 163, 184, 0.45);
-      --input-bg: #ffffff;
-      --input-border: rgba(148, 163, 184, 0.72);
-      --input-focus: #0ea5e9;
-      --button-bg: linear-gradient(135deg, #2563eb, #0ea5e9);
-      --button-hover: linear-gradient(135deg, #1d4ed8, #0284c7);
-      --button-text: #ffffff;
-      --shadow: 0 15px 30px rgba(148, 163, 184, 0.35);
+      --bg-app: #f6f0ea;
+      --bg-panel: #fffaf5;
+      --bg-panel-soft: #f3e8dc;
+      --bg-elevated: #ece1d5;
+      --border-soft: rgba(122, 87, 57, 0.14);
+      --border-strong: rgba(234, 88, 12, 0.28);
+      --text-strong: #201a17;
+      --text-muted: #7a6e65;
+      --accent: #ea580c;
+      --accent-soft: rgba(234, 88, 12, 0.12);
+      --success: #15803d;
+      --warning: #b45309;
+      --danger: #b91c1c;
+
+      --bg: var(--bg-app);
+      --bg-soft: var(--bg-panel);
+      --text: var(--text-strong);
+      --muted: var(--text-muted);
+      --card-bg: linear-gradient(180deg, rgba(255, 251, 247, 0.98) 0%, rgba(250, 243, 236, 0.98) 100%);
+      --card-border: var(--border-soft);
+      --input-bg: rgba(255, 255, 255, 0.96);
+      --input-border: rgba(122, 87, 57, 0.18);
+      --input-focus: var(--accent);
+      --button-bg: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+      --button-hover: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
+      --button-text: #fff7ed;
+      --shadow: 0 22px 50px rgba(109, 76, 44, 0.12);
     }
 
     body {
-      font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+      font-family: 'Avenir Next', 'Inter', 'Segoe UI', sans-serif;
       margin: 0;
-      background: radial-gradient(circle at 20% 0%, #1e293b 0%, var(--bg) 45%);
+      background:
+        radial-gradient(circle at top right, rgba(249, 115, 22, 0.15), transparent 34%),
+        radial-gradient(circle at 20% 100%, rgba(59, 130, 246, 0.08), transparent 30%),
+        var(--bg-app);
       color: var(--text);
       transition: background 0.2s ease, color 0.2s ease;
       padding: 24px;
       box-sizing: border-box;
       min-height: 100vh;
+      position: relative;
     }
 
-    .theme-floating-btn {
+    body::before {
+      content: '';
       position: fixed;
-      top: 18px;
-      right: 18px;
-      z-index: 20;
-      width: 44px;
-      height: 44px;
-      border-radius: 999px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 20px;
-      padding: 0;
-      margin: 0;
+      inset: 0;
+      background:
+        radial-gradient(circle at 78% 8%, rgba(249, 115, 22, 0.16), transparent 22%),
+        radial-gradient(circle at 12% 90%, rgba(37, 99, 235, 0.08), transparent 18%);
+      pointer-events: none;
+      z-index: 0;
     }
 
     .app-shell {
+      position: relative;
+      z-index: 1;
       display: grid;
-      grid-template-columns: 260px 1fr;
-      gap: 18px;
-      max-width: 1320px;
+      grid-template-columns: 300px minmax(0, 1fr);
+      gap: 22px;
+      max-width: 1480px;
       margin: 0 auto;
       align-items: start;
       min-width: 0;
@@ -110,38 +164,305 @@ def create_ui_router(job_secret: str) -> APIRouter:
     .sidebar {
       border: 1px solid var(--card-border);
       background: var(--card-bg);
-      border-radius: 16px;
-      padding: 18px;
+      border-radius: 26px;
+      padding: 22px 18px 18px;
       position: sticky;
-      top: 20px;
-      backdrop-filter: blur(6px);
+      top: 22px;
+      backdrop-filter: blur(18px);
       box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      min-width: 0;
     }
 
-    .brand-title { margin: 0; }
+    .sidebar-brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 52px;
+      height: 52px;
+      border-radius: 16px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #fb923c 0%, #ea580c 100%);
+      color: #fff7ed;
+      font-size: 1.35rem;
+      box-shadow: 0 14px 30px rgba(249, 115, 22, 0.28);
+      flex: 0 0 auto;
+    }
+
+    .brand-copy {
+      min-width: 0;
+    }
+
+    .brand-title {
+      margin: 0;
+      font-size: 1.85rem;
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+
+    .brand-version {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .sidebar-intro {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+      font-size: 0.94rem;
+    }
+
+    .sidebar-section-label,
+    .topbar-eyebrow {
+      margin: 0;
+      color: rgba(255, 255, 255, 0.46);
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    :root[data-theme='light'] .sidebar-section-label,
+    :root[data-theme='light'] .topbar-eyebrow {
+      color: rgba(32, 26, 23, 0.48);
+    }
+
+    .tabs {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin: 0;
+    }
+
+    .tab-btn {
+      width: 100%;
+      text-align: left;
+      margin: 0;
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text);
+      padding: 0;
+      border-radius: 18px;
+      overflow: hidden;
+      box-shadow: none;
+    }
+
+    .tab-btn:hover {
+      transform: translateY(-1px);
+      background: rgba(255, 255, 255, 0.02);
+      border-color: rgba(255, 255, 255, 0.04);
+      filter: none;
+    }
+
+    .tab-btn.active {
+      background: linear-gradient(180deg, rgba(249, 115, 22, 0.18), rgba(249, 115, 22, 0.08));
+      border-color: var(--border-strong);
+      box-shadow:
+        inset 0 0 0 1px rgba(249, 115, 22, 0.1),
+        0 12px 30px rgba(0, 0, 0, 0.22);
+    }
+
+    .tab-nav {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 16px;
+      min-width: 0;
+    }
+
+    .tab-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      font-size: 1rem;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      flex: 0 0 auto;
+    }
+
+    .tab-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .tab-title {
+      font-size: 0.98rem;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .tab-subtitle {
+      color: var(--muted);
+      font-size: 0.78rem;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .nav-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 38px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--card-border);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--muted);
+      font-size: 0.72rem;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .nav-badge.is-hidden {
+      display: none;
+    }
+
+    .nav-badge[data-variant='live'] {
+      color: #dcfce7;
+      background: rgba(34, 197, 94, 0.16);
+      border-color: rgba(34, 197, 94, 0.32);
+    }
+
+    .nav-badge[data-variant='count'] {
+      color: #fff7ed;
+      background: rgba(249, 115, 22, 0.18);
+      border-color: rgba(249, 115, 22, 0.28);
+    }
+
+    .nav-badge[data-variant='neutral'] {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.08);
+    }
+
+    .nav-badge[data-variant='warning'] {
+      color: #fef3c7;
+      background: rgba(245, 158, 11, 0.18);
+      border-color: rgba(245, 158, 11, 0.3);
+    }
+
+    .nav-badge[data-variant='danger'] {
+      color: #fee2e2;
+      background: rgba(239, 68, 68, 0.16);
+      border-color: rgba(239, 68, 68, 0.28);
+    }
+
+    .nav-badge[data-variant='success'] {
+      color: #dcfce7;
+      background: rgba(34, 197, 94, 0.16);
+      border-color: rgba(34, 197, 94, 0.28);
+    }
+
     .content-area {
       min-width: 0;
       width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .content-topbar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 2px 4px 8px 4px;
+    }
+
+    .topbar-copy {
+      min-width: 0;
+    }
+
+    .page-title {
+      margin: 8px 0 0;
+      font-size: clamp(1.8rem, 3vw, 2.5rem);
+      line-height: 1;
+      letter-spacing: -0.05em;
+    }
+
+    .topbar-meta {
+      margin: 10px 0 0;
+      max-width: 720px;
+    }
+
+    .topbar-actions {
+      display: flex;
+      gap: 10px;
+      flex: 0 0 auto;
+    }
+
+    .content-panels {
+      min-width: 0;
     }
 
     .card {
       border: 1px solid var(--card-border);
       background: var(--card-bg);
-      border-radius: 14px;
-      padding: 16px;
-      margin-bottom: 14px;
+      border-radius: 22px;
+      padding: 20px 22px;
+      margin-bottom: 0;
       box-shadow: var(--shadow);
-      backdrop-filter: blur(4px);
+      backdrop-filter: blur(18px);
       min-width: 0;
       overflow-x: clip;
+      position: relative;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      pointer-events: none;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    .warm-card {
+      background:
+        linear-gradient(180deg, rgba(57, 32, 20, 0.55) 0%, rgba(27, 20, 18, 0.92) 100%);
+      border-color: rgba(249, 115, 22, 0.18);
+    }
+
+    h1,
+    h2,
+    h3 {
+      color: var(--text);
+    }
+
+    h3 {
+      margin: 0 0 12px;
+      font-size: 1.08rem;
+      letter-spacing: -0.02em;
+    }
+
+    p {
+      line-height: 1.6;
     }
 
     pre {
       white-space: pre-wrap;
       background: var(--input-bg);
       border: 1px solid var(--input-border);
-      border-radius: 10px;
-      padding: 10px;
+      border-radius: 18px;
+      padding: 14px;
     }
 
     textarea,
@@ -151,78 +472,147 @@ def create_ui_router(job_secret: str) -> APIRouter:
       background: var(--input-bg);
       color: var(--text);
       border: 1px solid var(--input-border);
-      border-radius: 10px;
-      padding: 10px 12px;
+      border-radius: 14px;
+      padding: 0 14px;
       box-sizing: border-box;
-      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      font: inherit;
+      min-width: 0;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
     }
 
-    textarea { min-height: 140px; }
+    input,
+    select {
+      height: 48px;
+      min-height: 48px;
+    }
+
+    textarea {
+      min-height: 140px;
+      padding: 13px 14px;
+      resize: vertical;
+    }
+
+    select {
+      -webkit-appearance: none;
+      appearance: none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+        linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+      background-position:
+        calc(100% - 18px) center,
+        calc(100% - 12px) center;
+      background-size: 6px 6px, 6px 6px;
+      background-repeat: no-repeat;
+      padding-right: 38px;
+    }
 
     textarea:focus,
     input:focus,
     select:focus {
       outline: none;
-      border-color: var(--input-focus);
-      box-shadow: 0 0 0 3px color-mix(in srgb, var(--input-focus) 25%, transparent);
+      border-color: rgba(249, 115, 22, 0.5);
+      box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.16);
     }
 
     button {
       margin-right: 8px;
       margin-top: 8px;
-      margin-bottom: 10px;
+      margin-bottom: 0;
+      min-height: 42px;
+      padding: 0 15px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
       background: var(--button-bg);
       color: var(--button-text);
-      border: 0;
-      border-radius: 10px;
-      padding: 9px 14px;
+      border: 1px solid rgba(251, 146, 60, 0.3);
+      border-radius: 14px;
       cursor: pointer;
-      font-weight: 600;
-      transition: transform 0.2s ease, filter 0.2s ease;
+      font-weight: 700;
+      font-family: inherit;
+      transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease;
+      box-shadow: 0 12px 28px rgba(249, 115, 22, 0.2);
     }
 
     button:hover {
       background: var(--button-hover);
       transform: translateY(-1px);
-      filter: brightness(1.05);
+      filter: brightness(1.02);
+      box-shadow: 0 14px 30px rgba(249, 115, 22, 0.24);
     }
 
-    .tabs {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      margin: 14px 0;
+    button:active {
+      transform: translateY(0);
     }
 
-    .tab-btn {
-      width: 100%;
-      text-align: left;
-      margin: 0;
-      opacity: 0.86;
-      background: var(--input-bg);
-      border: 1px solid var(--input-border);
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.68;
+      filter: grayscale(0.12);
+      box-shadow: none;
+    }
+
+    .ghost-btn,
+    details.settings-dropdown > summary {
+      background: rgba(255, 255, 255, 0.03);
       color: var(--text);
+      border: 1px solid var(--input-border);
+      box-shadow: none;
     }
 
-    .tab-btn.active {
-      opacity: 1;
-      border-color: var(--input-focus);
-      box-shadow: inset 0 0 0 1px var(--input-focus);
+    .ghost-btn:hover,
+    details.settings-dropdown > summary:hover {
+      background: rgba(255, 255, 255, 0.06);
+      filter: none;
+      box-shadow: none;
+    }
+
+    .icon-btn {
+      width: 46px;
+      min-width: 46px;
+      height: 46px;
+      padding: 0;
+      border-radius: 14px;
+      margin: 0;
+      font-size: 1.08rem;
+    }
+
+    button.tab-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      box-shadow: none;
+      min-height: 0;
+      padding: 0;
+      margin: 0;
+    }
+
+    button.tab-btn:hover {
+      background: rgba(255, 255, 255, 0.02);
+      border-color: rgba(255, 255, 255, 0.04);
+      box-shadow: none;
+    }
+
+    button.tab-btn.active {
+      background: linear-gradient(180deg, rgba(249, 115, 22, 0.18), rgba(249, 115, 22, 0.08));
+      border-color: var(--border-strong);
+      box-shadow:
+        inset 0 0 0 1px rgba(249, 115, 22, 0.1),
+        0 12px 30px rgba(0, 0, 0, 0.22);
     }
 
     details.settings-dropdown {
-      margin-bottom: 14px;
+      margin-bottom: 0;
     }
 
     details.settings-dropdown > summary {
       list-style: none;
       cursor: pointer;
-      padding: 10px 12px;
-      border: 1px solid var(--input-border);
-      border-radius: 10px;
-      background: var(--input-bg);
-      font-weight: 600;
-      margin-bottom: 10px;
+      padding: 13px 16px;
+      border-radius: 16px;
+      font-weight: 700;
+      margin-bottom: 12px;
     }
 
     details.settings-dropdown > summary::-webkit-details-marker {
@@ -239,31 +629,60 @@ def create_ui_router(job_secret: str) -> APIRouter:
       content: '▸';
     }
 
-    .tab-panel { display: none; }
-    .tab-panel.active { display: block; }
-    .kv { margin: 4px 0; }
+    .tab-panel {
+      display: none;
+      min-width: 0;
+    }
+
+    .tab-panel.active {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      animation: panelFade 0.18s ease;
+    }
+
+    .kv {
+      margin: 0;
+      line-height: 1.55;
+    }
 
     .logs {
       white-space: pre-wrap;
-      background: var(--input-bg);
-      border: 1px solid var(--input-border);
-      border-radius: 10px;
-      padding: 10px;
-      max-height: 260px;
+      background: #0b0b0f;
+      border: 1px solid rgba(249, 115, 22, 0.12);
+      border-radius: 18px;
+      padding: 14px;
+      max-height: 280px;
       overflow: auto;
-      font-family: Menlo, Consolas, monospace;
+      font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
       font-size: 12px;
+      line-height: 1.6;
+      color: #ddd6cf;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
     }
 
-    .muted { color: var(--muted); font-size: 0.9em; }
+    .muted {
+      color: var(--muted);
+      font-size: 0.92em;
+      line-height: 1.5;
+    }
 
     #status {
-      margin: 10px 0 6px;
-      min-height: 1.4em;
-      font-weight: 600;
+      margin: 0;
+      min-height: 0;
+      padding: 13px 14px;
+      border-radius: 16px;
+      border: 1px solid var(--input-border);
+      background: rgba(255, 255, 255, 0.03);
       color: var(--text);
+      font-weight: 600;
+      line-height: 1.45;
       opacity: 1;
-      transition: opacity 0.2s ease, color 0.2s ease;
+      transition: opacity 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    }
+
+    #status:empty {
+      display: none;
     }
 
     #status.status-error {
@@ -305,10 +724,11 @@ def create_ui_router(job_secret: str) -> APIRouter:
       overflow: auto;
       border: 1px solid var(--card-border);
       background: var(--card-bg);
-      border-radius: 14px;
-      padding: 16px;
+      border-radius: 24px;
+      padding: 20px;
       box-sizing: border-box;
       box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
     }
 
     .modal-card h3 { margin-top: 0; }
@@ -317,7 +737,7 @@ def create_ui_router(job_secret: str) -> APIRouter:
       width: 100%;
       max-width: 100%;
       min-width: 0;
-      margin-bottom: 8px;
+      margin-bottom: 10px;
       box-sizing: border-box;
     }
 
@@ -330,14 +750,633 @@ def create_ui_router(job_secret: str) -> APIRouter:
       white-space: pre-wrap;
     }
 
+    #tabEmail {
+      gap: 16px;
+    }
+
+    #tabEmail .email-toolbar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      overflow: visible;
+    }
+
+    #tabEmail .email-toolbar-copy {
+      min-width: 0;
+    }
+
+    #tabEmail .email-toolbar-copy h3 {
+      margin-bottom: 6px;
+    }
+
+    #tabEmail .email-toolbar-copy p {
+      margin: 0;
+      max-width: 720px;
+    }
+
+    #tabEmail .email-toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 10px;
+      flex: 0 0 auto;
+    }
+
+    #tabEmail .email-toolbar-actions button {
+      margin: 0;
+    }
+
+    #tabEmail .email-settings-panel {
+      margin: 0;
+    }
+
+    #tabEmail .email-settings-panel > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 14px 16px;
+      border-radius: 18px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+    }
+
+    #tabEmail .email-settings-panel > summary::after {
+      margin-left: auto;
+      font-size: 0.9rem;
+    }
+
+    #tabEmail .email-settings-body {
+      padding: 18px 20px 20px;
+    }
+
+    #tabEmail .email-settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px 16px;
+    }
+
+    #tabEmail .email-settings-field {
+      min-width: 0;
+    }
+
+    #tabEmail .email-settings-field--full {
+      grid-column: 1 / -1;
+    }
+
+    #tabEmail .email-settings-field .muted {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    #tabEmail .email-settings-field .field {
+      margin-bottom: 0;
+    }
+
+    #tabEmail .email-field-note {
+      margin: 8px 0 0;
+    }
+
+    #tabEmail .email-settings-save {
+      margin-top: 16px;
+    }
+
+    #tabEmail .email-settings-save button {
+      margin: 0;
+    }
+
+    #tabEmail .email-workbench {
+      overflow: visible;
+    }
+
+    #tabEmail .email-workbench-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    #tabEmail .email-workbench-copy h3 {
+      margin-bottom: 6px;
+    }
+
+    #tabEmail .email-workbench-copy p {
+      margin: 0;
+    }
+
+    #tabEmail .email-workbench-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(249, 115, 22, 0.18);
+      background: rgba(249, 115, 22, 0.12);
+      color: #fdba74;
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+
+    #tabEmail #list {
+      display: grid;
+      grid-template-columns: minmax(280px, 330px) minmax(0, 1fr);
+      gap: 14px 22px;
+      align-items: start;
+    }
+
+    #tabEmail #list > .card {
+      grid-column: 1 / -1;
+    }
+
+    #tabEmail .email-entry {
+      display: contents;
+    }
+
+    #tabEmail .email-select {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #tabEmail .email-summary {
+      grid-column: 1;
+      display: block;
+      padding: 16px;
+      border-radius: 20px;
+      border: 1px solid var(--input-border);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.018));
+      color: var(--text);
+      cursor: pointer;
+      transition: border-color 0.22s ease, background 0.22s ease, box-shadow 0.22s ease, transform 0.22s ease;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+      min-width: 0;
+    }
+
+    #tabEmail .email-summary:hover {
+      transform: translateY(-1px);
+      border-color: rgba(249, 115, 22, 0.24);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(249, 115, 22, 0.035));
+    }
+
+    #tabEmail .email-select:focus-visible + .email-summary {
+      outline: 2px solid rgba(249, 115, 22, 0.42);
+      outline-offset: 2px;
+    }
+
+    #tabEmail .email-select:checked + .email-summary {
+      border-color: rgba(249, 115, 22, 0.42);
+      background:
+        linear-gradient(180deg, rgba(249, 115, 22, 0.16), rgba(249, 115, 22, 0.06));
+      box-shadow:
+        inset 0 0 0 1px rgba(249, 115, 22, 0.14),
+        0 18px 36px rgba(0, 0, 0, 0.22);
+    }
+
+    #tabEmail .email-summary-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    #tabEmail .email-summary-time {
+      color: var(--muted);
+      font-size: 0.74rem;
+      white-space: nowrap;
+    }
+
+    #tabEmail .email-summary-subject {
+      margin: 0 0 6px;
+      font-size: 1rem;
+      font-weight: 700;
+      line-height: 1.3;
+      color: var(--text);
+      letter-spacing: -0.01em;
+    }
+
+    #tabEmail .email-summary-from {
+      color: var(--muted);
+      font-size: 0.84rem;
+      margin: 0 0 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #tabEmail .email-summary-preview {
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.55;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      word-break: break-word;
+    }
+
+    #tabEmail .email-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 84px;
+      padding: 6px 11px;
+      border-radius: 999px;
+      border: 1px solid var(--input-border);
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    #tabEmail .email-badge.is-pending {
+      color: #fef3c7;
+      background: rgba(245, 158, 11, 0.16);
+      border-color: rgba(245, 158, 11, 0.28);
+    }
+
+    #tabEmail .email-badge.is-reviewed {
+      color: #dbeafe;
+      background: rgba(100, 116, 139, 0.22);
+      border-color: rgba(148, 163, 184, 0.28);
+    }
+
+    #tabEmail .email-badge.is-spam {
+      color: #e5e7eb;
+      background: rgba(55, 65, 81, 0.72);
+      border-color: rgba(75, 85, 99, 0.7);
+    }
+
+    #tabEmail .email-badge.is-archive {
+      color: var(--muted);
+      background: transparent;
+      border-color: var(--input-border);
+    }
+
+    #tabEmail .email-badge.is-sent {
+      color: #dcfce7;
+      background: rgba(34, 197, 94, 0.14);
+      border-color: rgba(34, 197, 94, 0.26);
+    }
+
+    #tabEmail .email-badge.is-copied {
+      color: #e0f2fe;
+      background: rgba(56, 189, 248, 0.14);
+      border-color: rgba(56, 189, 248, 0.24);
+    }
+
+    #tabEmail .email-detail-panel {
+      grid-column: 2;
+      grid-row: 1 / span 50;
+      display: none;
+      position: sticky;
+      top: 0;
+      align-self: start;
+      padding: 22px;
+      overflow: visible;
+    }
+
+    #tabEmail .email-select:checked + .email-summary + .email-detail-panel {
+      display: block;
+    }
+
+    #tabEmail .email-detail-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    #tabEmail .email-detail-kicker {
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    #tabEmail .email-detail-title {
+      margin: 6px 0 0;
+      font-size: clamp(1.3rem, 1.8vw, 1.6rem);
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+    }
+
+    #tabEmail .email-detail-meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    #tabEmail .email-meta-block {
+      padding: 13px 14px;
+      border-radius: 16px;
+      border: 1px solid var(--input-border);
+      background: var(--input-bg);
+      min-width: 0;
+    }
+
+    #tabEmail .email-meta-label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    #tabEmail .email-meta-value {
+      display: block;
+      color: var(--text);
+      line-height: 1.45;
+      word-break: break-word;
+    }
+
+    #tabEmail .email-detail-sections {
+      display: grid;
+      gap: 14px;
+    }
+
+    #tabEmail .email-panel-section,
+    #tabEmail .email-compose-panel {
+      border: 1px solid var(--input-border);
+      border-radius: 20px;
+      padding: 16px;
+      background: var(--input-bg);
+    }
+
+    #tabEmail .email-ai-card {
+      padding: 16px;
+    }
+
+    #tabEmail .email-section-heading-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    #tabEmail .email-section-heading {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    #tabEmail .email-section-note {
+      color: rgba(253, 186, 116, 0.9);
+      font-size: 0.84rem;
+    }
+
+    #tabEmail .email-original,
+    #tabEmail .email-ai-compose {
+      margin-bottom: 0;
+      min-height: 190px;
+      max-height: 330px;
+      background: rgba(8, 8, 12, 0.86);
+      border-radius: 16px;
+    }
+
+    #tabEmail .email-ai-compose {
+      color: #fff7ed;
+    }
+
+    #tabEmail .email-compose-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px 14px;
+    }
+
+    #tabEmail .email-field-group {
+      min-width: 0;
+    }
+
+    #tabEmail .email-field-group--wide {
+      grid-column: 1 / -1;
+    }
+
+    #tabEmail .email-field-group .muted {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    #tabEmail .email-field-group .field {
+      margin-bottom: 0;
+    }
+
+    #tabEmail .email-detail-actions {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--input-border);
+    }
+
+    #tabEmail .email-action-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    #tabEmail .email-action-group button {
+      margin: 0;
+    }
+
+    #tabEmail .email-reviewed-section {
+      border-style: dashed;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015));
+    }
+
+    #tabEmail .email-reviewed-section p {
+      margin-top: 0;
+    }
+
+    #tabEmail .email-reviewed-card {
+      display: grid;
+      gap: 12px;
+    }
+
+    #tabEmail .email-reviewed-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    #tabEmail .email-reviewed-title {
+      margin: 0;
+      font-size: 1rem;
+      line-height: 1.3;
+      letter-spacing: -0.01em;
+    }
+
+    #tabEmail .email-reviewed-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    #tabEmail .email-reviewed-actions button {
+      margin: 0;
+    }
+
+    #tabIssue .issue-console-card {
+      padding: 22px;
+    }
+
+    #tabIssue .issue-console-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(360px, 0.92fr);
+      gap: 22px;
+      align-items: start;
+    }
+
+    #tabIssue .issue-form-panel,
+    #tabIssue .issue-draft-panel {
+      min-width: 0;
+      border-radius: 22px;
+      padding: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(255, 255, 255, 0.01)),
+        rgba(9, 13, 25, 0.72);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    #tabIssue .issue-draft-panel {
+      border-color: rgba(249, 115, 22, 0.22);
+      background:
+        radial-gradient(circle at top right, rgba(249, 115, 22, 0.16), transparent 42%),
+        linear-gradient(180deg, rgba(249, 115, 22, 0.06), rgba(255, 255, 255, 0.012)),
+        rgba(17, 12, 10, 0.86);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.04),
+        0 18px 44px rgba(0, 0, 0, 0.24);
+    }
+
+    #tabIssue .issue-panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    #tabIssue .issue-panel-copy {
+      min-width: 0;
+    }
+
+    #tabIssue .issue-panel-kicker {
+      margin: 0 0 6px;
+      font-size: 0.78rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(251, 146, 60, 0.8);
+    }
+
+    #tabIssue .issue-panel-copy h3 {
+      margin: 0;
+      font-size: 1.35rem;
+    }
+
+    #tabIssue .issue-panel-subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
     #tabIssue input.field,
     #tabIssue select.field {
-      height: 44px;
-      min-height: 44px;
+      height: 50px;
+      min-height: 50px;
+    }
+
+    #tabIssue textarea.field {
+      margin-bottom: 0;
+      padding: 14px 16px;
+      line-height: 1.55;
+      border-radius: 16px;
+    }
+
+    #tabIssue .issue-compact-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    #tabIssue .issue-field-cell,
+    #tabIssue .issue-field-row,
+    #tabIssue .issue-input-stage,
+    #tabIssue .issue-history-field {
+      min-width: 0;
+    }
+
+    #tabIssue .issue-field-cell label,
+    #tabIssue .issue-field-row label,
+    #tabIssue .issue-input-stage label,
+    #tabIssue .issue-history-field label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    #tabIssue .issue-field-row {
+      margin-bottom: 12px;
+    }
+
+    #tabIssue .issue-input-stage {
+      margin: 14px 0 16px;
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(4, 8, 18, 0.5);
+    }
+
+    #tabIssue #issueUserInput {
+      min-height: 280px;
+      background: rgba(8, 12, 24, 0.9);
+    }
+
+    #tabIssue .issue-form-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin-top: 14px;
+    }
+
+    #tabIssue .issue-form-actions .muted,
+    #tabIssue .issue-draft-status {
+      flex: 1 1 220px;
+      min-width: 220px;
+      margin: 0;
     }
 
     #tabIssue .issue-toggle-group {
-      margin: 6px 0 12px;
+      margin: 0;
     }
 
     #tabIssue .issue-toggle {
@@ -365,9 +1404,9 @@ def create_ui_router(job_secret: str) -> APIRouter:
       height: 28px;
       border-radius: 999px;
       border: 1px solid var(--input-border);
-      background: rgba(148, 163, 184, 0.22);
+      background: rgba(255, 255, 255, 0.12);
       transition: background 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
-      box-shadow: inset 0 1px 2px rgba(2, 6, 23, 0.35);
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
       flex: 0 0 auto;
     }
 
@@ -389,9 +1428,9 @@ def create_ui_router(job_secret: str) -> APIRouter:
     }
 
     #tabIssue .issue-toggle-input:checked + .issue-toggle-track {
-      background: linear-gradient(135deg, #2563eb, #0ea5e9);
-      border-color: #38bdf8;
-      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
+      background: linear-gradient(135deg, #fb923c, #ea580c);
+      border-color: rgba(249, 115, 22, 0.42);
+      box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.16);
     }
 
     #tabIssue .issue-toggle-input:checked + .issue-toggle-track .issue-toggle-knob {
@@ -402,6 +1441,7 @@ def create_ui_router(job_secret: str) -> APIRouter:
       display: inline-flex;
       align-items: center;
       gap: 8px;
+      flex-wrap: wrap;
     }
 
     #tabIssue .issue-toggle-state {
@@ -422,41 +1462,117 @@ def create_ui_router(job_secret: str) -> APIRouter:
 
     #tabIssue .issue-toggle-input:checked ~ .issue-toggle-label .issue-toggle-state {
       color: #ffffff;
-      border-color: #38bdf8;
-      background: #0284c7;
+      border-color: rgba(249, 115, 22, 0.36);
+      background: rgba(249, 115, 22, 0.18);
+      text-shadow: 0 0 8px rgba(249, 115, 22, 0.24);
     }
 
     #tabIssue .issue-toggle-input:checked ~ .issue-toggle-label .issue-toggle-state::before {
       content: 'ON';
     }
 
-    #tabIssue select.field {
-      padding-right: 38px;
-      -webkit-appearance: none;
-      appearance: none;
-      background-image:
-        linear-gradient(45deg, transparent 50%, var(--muted) 50%),
-        linear-gradient(135deg, var(--muted) 50%, transparent 50%);
-      background-position:
-        calc(100% - 18px) center,
-        calc(100% - 12px) center;
-      background-size: 6px 6px, 6px 6px;
-      background-repeat: no-repeat;
+    #tabIssue #issueEnrichLinksRow {
+      margin-bottom: 14px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(249, 115, 22, 0.16);
+      background: rgba(249, 115, 22, 0.06);
+    }
+
+    #tabIssue #issueEnrichLinksRow .muted {
+      margin-top: 10px;
+      font-size: 0.92rem;
+    }
+
+    #tabIssue #issueGenerateBtn,
+    #tabIssue #issueSubmitBtn {
+      background: linear-gradient(135deg, #ff9a3d, #f97316);
+      color: #fff7ed;
+      border: 1px solid rgba(255, 186, 120, 0.3);
+      box-shadow: 0 16px 32px rgba(249, 115, 22, 0.22);
+    }
+
+    #tabIssue #issueGenerateBtn:hover,
+    #tabIssue #issueSubmitBtn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 18px 36px rgba(249, 115, 22, 0.3);
+    }
+
+    #tabIssue #issueClearDraftBtn,
+    #tabIssue #issueToggleLogBtn,
+    #tabIssue #issueHistoryCardToggleBtn,
+    #tabIssue #issueListRunsBtn,
+    #tabIssue #issueLoadHistoryBtn,
+    #tabIssue #issueToggleHistoryBtn,
+    #tabIssue #issueMarkResolvedBtn {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: var(--text);
+      box-shadow: none;
+    }
+
+    #tabIssue #issueClearDraftBtn:hover,
+    #tabIssue #issueToggleLogBtn:hover,
+    #tabIssue #issueHistoryCardToggleBtn:hover,
+    #tabIssue #issueListRunsBtn:hover,
+    #tabIssue #issueLoadHistoryBtn:hover,
+    #tabIssue #issueToggleHistoryBtn:hover,
+    #tabIssue #issueMarkResolvedBtn:hover {
+      border-color: rgba(249, 115, 22, 0.28);
+      color: #fff2e6;
+      background: rgba(249, 115, 22, 0.1);
     }
 
     #tabIssue .issue-runtime-grid {
       display: grid;
-      grid-template-columns: minmax(320px, 1fr) minmax(280px, 0.9fr);
-      gap: 12px;
+      grid-template-columns: 1fr;
+      gap: 14px;
       align-items: start;
+      margin-top: 16px;
+    }
+
+    #tabIssue #issueDraftEditor {
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(249, 115, 22, 0.16);
+      background: rgba(12, 11, 17, 0.5);
+    }
+
+    #tabIssue #issueDraftTitle,
+    #tabIssue #issueDraftDescription,
+    #tabIssue #issueDraftSteps {
+      background: rgba(8, 11, 20, 0.84);
+    }
+
+    #tabIssue #issueDraftWarningsWrap {
+      margin: 16px 0 12px;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(249, 115, 22, 0.15);
+      background: rgba(249, 115, 22, 0.06);
+    }
+
+    #tabIssue #issueDraftSourceWarningsWrap,
+    #tabIssue #issueDraftUserWarningsWrap {
       margin-top: 10px;
     }
 
+    #tabIssue .issue-draft-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    #tabIssue .issue-draft-status {
+      margin-top: 12px;
+    }
+
     #tabIssue .issue-log-panel {
-      border: 1px solid var(--input-border);
-      border-radius: 10px;
-      background: var(--input-bg);
-      padding: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 18px;
+      background: rgba(5, 8, 16, 0.86);
+      padding: 14px;
     }
 
     #tabIssue .issue-log-title {
@@ -465,9 +1581,134 @@ def create_ui_router(job_secret: str) -> APIRouter:
       color: var(--text);
     }
 
+    #tabIssue #issuePlaywrightLog,
+    #tabIssue #issueHistoryLog,
+    #tabIssue #issueDraftSourceWarnings,
+    #tabIssue #issueDraftUserWarnings {
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(2, 6, 14, 0.92);
+    }
+
     #tabIssue #issuePlaywrightLog {
       min-height: 220px;
       max-height: 320px;
+    }
+
+    #tabIssue .issue-history-card {
+      padding: 22px;
+    }
+
+    #tabIssue .issue-history-card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+
+    #tabIssue .issue-history-card-body {
+      margin-top: 16px;
+    }
+
+    #tabIssue .issue-history-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    #tabIssue .issue-status-pills {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    #tabIssue .issue-status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      background: rgba(255, 255, 255, 0.04);
+      color: #e2e8f0;
+    }
+
+    #tabIssue .issue-status-pill::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: currentColor;
+      opacity: 0.9;
+    }
+
+    #tabIssue .issue-status-pill--submitted {
+      color: #34d399;
+      background: rgba(52, 211, 153, 0.12);
+      border-color: rgba(52, 211, 153, 0.22);
+    }
+
+    #tabIssue .issue-status-pill--resolved {
+      color: #cbd5e1;
+      background: rgba(148, 163, 184, 0.12);
+      border-color: rgba(148, 163, 184, 0.22);
+    }
+
+    #tabIssue .issue-status-pill--failed {
+      color: #f87171;
+      background: rgba(248, 113, 113, 0.12);
+      border-color: rgba(248, 113, 113, 0.22);
+    }
+
+    #tabIssue #issueRunTools {
+      display: grid;
+      gap: 12px;
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(255, 255, 255, 0.008)),
+        rgba(5, 9, 18, 0.66);
+    }
+
+    #tabIssue .issue-history-grid {
+      display: grid;
+      grid-template-columns: minmax(220px, 1.1fr) minmax(220px, 0.8fr) minmax(220px, 1fr);
+      gap: 12px;
+      align-items: end;
+    }
+
+    #tabIssue .issue-run-status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 50px;
+      padding: 0 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    #tabIssue .issue-history-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    #tabIssue #issueRecentRunsList,
+    #tabIssue #issueRunId {
+      font-family: Menlo, Consolas, monospace;
+    }
+
+    #tabIssue #issueHistoryLogWrap {
+      margin-top: 14px;
     }
 
     input.field[type="date"] {
@@ -476,19 +1717,799 @@ def create_ui_router(job_secret: str) -> APIRouter:
       padding-right: 12px;
     }
 
-    .answers-messages {
+    #tabWorkday {
+      gap: 20px;
+    }
+
+    #tabWorkday .workday-hero-card {
+      padding: 24px;
+      border-color: rgba(249, 115, 22, 0.2);
+      background:
+        radial-gradient(circle at top right, rgba(249, 115, 22, 0.2), transparent 34%),
+        linear-gradient(180deg, rgba(35, 28, 24, 0.96) 0%, rgba(18, 17, 21, 0.98) 100%);
+      overflow: hidden;
+    }
+
+    #tabWorkday .workday-hero-card::after {
+      content: '';
+      position: absolute;
+      inset: auto -8% -44% auto;
+      width: 280px;
+      height: 280px;
+      border-radius: 999px;
+      background: radial-gradient(circle, rgba(59, 130, 246, 0.14), transparent 68%);
+      pointer-events: none;
+      filter: blur(6px);
+    }
+
+    #tabWorkday .workday-hero-top {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    #tabWorkday .workday-hero-head {
+      min-width: 0;
+      max-width: 760px;
+    }
+
+    #tabWorkday .workday-section-kicker {
+      margin: 0;
+      color: rgba(255, 255, 255, 0.48);
+      font-size: 0.75rem;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    :root[data-theme='light'] #tabWorkday .workday-section-kicker {
+      color: rgba(32, 26, 23, 0.48);
+    }
+
+    #tabWorkday .workday-hero-title-row,
+    #tabWorkday .workday-section-head,
+    #tabWorkday .workday-terminal-toolbar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    #tabWorkday .workday-hero-title-row {
+      margin-top: 10px;
+    }
+
+    #tabWorkday .workday-hero-title-row h3,
+    #tabWorkday .workday-section-head h3,
+    #tabWorkday .workday-terminal-toolbar h3 {
+      margin: 0;
+      font-size: clamp(1.3rem, 2vw, 1.7rem);
+      letter-spacing: -0.04em;
+    }
+
+    #tabWorkday .workday-section-head h3,
+    #tabWorkday .workday-terminal-toolbar h3 {
+      font-size: 1.12rem;
+      letter-spacing: -0.02em;
+    }
+
+    #tabWorkday .workday-hero-summary {
+      margin: 12px 0 0;
+      max-width: 660px;
+      color: var(--text);
+      opacity: 0.86;
+      line-height: 1.55;
+    }
+
+    #tabWorkday .workday-mini-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+
+    #tabWorkday .workday-mini-badge[data-variant='live'] {
+      color: #dcfce7;
+      background: rgba(34, 197, 94, 0.16);
+      border-color: rgba(34, 197, 94, 0.28);
+      box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.06) inset;
+    }
+
+    #tabWorkday .workday-mini-badge[data-variant='warning'] {
+      color: #fef3c7;
+      background: rgba(245, 158, 11, 0.14);
+      border-color: rgba(245, 158, 11, 0.26);
+    }
+
+    #tabWorkday .workday-mini-badge[data-variant='neutral'] {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(255, 255, 255, 0.08);
+    }
+
+    #tabWorkday .workday-hero-actions {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+      flex: 0 0 auto;
+    }
+
+    #tabWorkday .workday-hero-actions button,
+    #tabWorkday .workday-block-actions button {
+      margin: 0;
+    }
+
+    #tabWorkday #resetWorkdaySessionBtn {
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text);
       border: 1px solid var(--input-border);
-      border-radius: 10px;
-      background: var(--input-bg);
-      padding: 8px;
-      max-height: 220px;
+      box-shadow: none;
+    }
+
+    #tabWorkday #resetWorkdaySessionBtn:hover {
+      background: rgba(255, 255, 255, 0.06);
+      box-shadow: none;
+      filter: none;
+    }
+
+    #tabWorkday #workdayRetryWrap {
+      margin: 0;
+    }
+
+    #tabWorkday .workday-metric-strip {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    #tabWorkday .workday-metric-card {
+      grid-column: span 3;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 18px;
+      padding: 15px 16px;
+      background: rgba(255, 255, 255, 0.035);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+      min-width: 0;
+    }
+
+    #tabWorkday .workday-metric-card--wide {
+      grid-column: span 4;
+    }
+
+    #tabWorkday .workday-metric-label {
+      display: block;
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    #tabWorkday .workday-metric-value {
+      min-height: 44px;
+      color: var(--text);
+      line-height: 1.55;
+    }
+
+    #tabWorkday #workdayStatusLine {
+      font-size: 0.96rem;
+    }
+
+    #tabWorkday #workdayStatusLine b {
+      color: #ffd8b4;
+      font-weight: 800;
+    }
+
+    #tabWorkday #workdayTimingLine {
+      color: var(--text);
+      opacity: 0.9;
+    }
+
+    #tabWorkday #workdayExpected {
+      color: var(--text);
+      opacity: 0.86;
+    }
+
+    #tabWorkday #workdaySettingsStatus {
+      display: inline-flex;
+      align-items: center;
+      min-height: 38px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+    }
+
+    #tabWorkday .workday-window-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-height: 44px;
+      justify-content: center;
+    }
+
+    #tabWorkday .workday-window-time {
+      font-size: 1.08rem;
+      letter-spacing: -0.02em;
+    }
+
+    #tabWorkday .workday-dual-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    #tabWorkday .workday-click-stream {
+      display: grid;
+      gap: 10px;
+    }
+
+    #tabWorkday #workdayClicks .kv {
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+    }
+
+    #tabWorkday .workday-block-copy {
+      margin: 12px 0 16px;
+      max-width: 52ch;
+    }
+
+    #tabWorkday .workday-date-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+
+    #tabWorkday .workday-date-field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    #tabWorkday .workday-date-field .field {
+      margin-bottom: 0;
+    }
+
+    #tabWorkday .workday-block-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 14px;
+    }
+
+    #tabWorkday .workday-terminal-card {
+      padding: 20px 22px 22px;
+    }
+
+    #tabWorkday .workday-terminal-toolbar {
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    #tabWorkday .workday-terminal-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    #tabWorkday .workday-terminal-hint {
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    #tabWorkday #workdayEvents {
+      background:
+        linear-gradient(180deg, rgba(9, 10, 14, 0.98) 0%, rgba(6, 7, 10, 1) 100%);
+      border-color: rgba(249, 115, 22, 0.14);
+      border-radius: 20px;
+      padding: 16px 18px;
+      min-height: 280px;
+      max-height: 420px;
+      font-size: 11.5px;
+      line-height: 1.72;
+      color: #e7ded6;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.04),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.02),
+        0 12px 32px rgba(0, 0, 0, 0.22);
+    }
+
+    #tabAnswers {
+      gap: 16px;
+    }
+
+    #tabAnswers #answersList {
+      display: block;
+      min-width: 0;
+    }
+
+    #tabAnswers .answers-panel-shell {
+      padding: 18px;
+      background:
+        radial-gradient(circle at top right, rgba(249, 115, 22, 0.13), transparent 34%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(255, 255, 255, 0));
+    }
+
+    #tabAnswers .answers-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    #tabAnswers .answers-toolbar-copy {
+      min-width: 0;
+    }
+
+    #tabAnswers .answers-toolbar-copy h3 {
+      margin: 0 0 4px;
+    }
+
+    #tabAnswers .answers-toolbar-copy .muted {
+      margin: 0;
+    }
+
+    #tabAnswers .answers-toolbar-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      color: #fdba74;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    #tabAnswers .answers-toolbar-kicker::before {
+      content: '';
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #fb923c, #f97316);
+      box-shadow: 0 0 12px rgba(249, 115, 22, 0.42);
+    }
+
+    #tabAnswers .answers-toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    #tabAnswers .answers-inbox {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.84fr) minmax(0, 1.45fr);
+      gap: 18px;
+      align-items: start;
+      min-width: 0;
+    }
+
+    #tabAnswers .answers-sidebar-summary {
+      grid-column: 1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(249, 115, 22, 0.14);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.022), rgba(255, 255, 255, 0.01));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+    }
+
+    #tabAnswers .answers-sidebar-summary strong {
+      display: block;
+      font-size: 1.05rem;
+      color: var(--text);
+    }
+
+    #tabAnswers .answers-sidebar-summary span {
+      color: var(--muted);
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    #tabAnswers .answers-sidebar-count {
+      min-width: 48px;
+      height: 48px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 16px;
+      border: 1px solid rgba(249, 115, 22, 0.2);
+      background: rgba(249, 115, 22, 0.14);
+      color: #fed7aa;
+      font-weight: 800;
+      font-size: 1.05rem;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    }
+
+    #tabAnswers .answers-chat-toggle {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #tabAnswers .answers-conversation-item {
+      grid-column: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+      padding: 14px 15px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      background: rgba(255, 255, 255, 0.018);
+      cursor: pointer;
+      transition:
+        border-color 0.2s ease,
+        background 0.2s ease,
+        transform 0.2s ease,
+        box-shadow 0.2s ease;
+    }
+
+    #tabAnswers .answers-conversation-item:hover {
+      border-color: rgba(249, 115, 22, 0.18);
+      background: rgba(255, 255, 255, 0.03);
+      transform: translateY(-1px);
+    }
+
+    #tabAnswers .answers-chat-toggle:checked + .answers-conversation-item {
+      border-color: rgba(249, 115, 22, 0.35);
+      background:
+        linear-gradient(180deg, rgba(249, 115, 22, 0.14), rgba(249, 115, 22, 0.05)),
+        rgba(255, 255, 255, 0.028);
+      box-shadow:
+        inset 0 0 0 1px rgba(249, 115, 22, 0.12),
+        0 12px 26px rgba(0, 0, 0, 0.2);
+    }
+
+    #tabAnswers .answers-conversation-top,
+    #tabAnswers .answers-detail-head,
+    #tabAnswers .answers-suggestion-head,
+    #tabAnswers .answers-composer-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    #tabAnswers .answers-conversation-name,
+    #tabAnswers .answers-chat-title {
+      margin: 0;
+      font-size: 1rem;
+      line-height: 1.2;
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    #tabAnswers .answers-conversation-meta,
+    #tabAnswers .answers-chat-submeta {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }
+
+    #tabAnswers .answers-detail-chips {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    #tabAnswers .answers-status-chip,
+    #tabAnswers .answers-channel-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.04);
+      white-space: nowrap;
+    }
+
+    #tabAnswers .answers-channel-chip {
+      color: #fdba74;
+      border-color: rgba(249, 115, 22, 0.18);
+      background: rgba(249, 115, 22, 0.1);
+    }
+
+    #tabAnswers .answers-status-chip[data-status="pending"] {
+      color: #fde68a;
+      border-color: rgba(250, 204, 21, 0.24);
+      background: rgba(250, 204, 21, 0.12);
+    }
+
+    #tabAnswers .answers-status-chip[data-status="draft"] {
+      color: #fdba74;
+      border-color: rgba(249, 115, 22, 0.24);
+      background: rgba(249, 115, 22, 0.12);
+    }
+
+    #tabAnswers .answers-status-chip[data-status="reviewed"] {
+      color: #cbd5e1;
+      border-color: rgba(148, 163, 184, 0.18);
+      background: rgba(100, 116, 139, 0.14);
+    }
+
+    #tabAnswers .answers-status-chip[data-status="sent"] {
+      color: #86efac;
+      border-color: rgba(34, 197, 94, 0.2);
+      background: rgba(34, 197, 94, 0.12);
+    }
+
+    #tabAnswers .answers-status-chip[data-status="spam"] {
+      color: #fecaca;
+      border-color: rgba(248, 113, 113, 0.2);
+      background: rgba(127, 29, 29, 0.22);
+    }
+
+    #tabAnswers .answers-conversation-preview {
+      margin: 0;
+      color: #d8d2c8;
+      font-size: 0.9rem;
+      line-height: 1.45;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      min-height: calc(1.45em * 2);
+    }
+
+    #tabAnswers .answers-conversation-foot {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    #tabAnswers .answers-conversation-count {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.05);
+      color: #d5c7b6;
+    }
+
+    #tabAnswers .answers-chat-panel {
+      grid-column: 2;
+      grid-row: 1 / span 50;
+      display: none;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 14px;
+      min-height: 720px;
+      border-radius: 24px;
+      border: 1px solid rgba(249, 115, 22, 0.16);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.028), rgba(255, 255, 255, 0.012)),
+        rgba(11, 11, 15, 0.78);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.025),
+        0 18px 42px rgba(0, 0, 0, 0.22);
+      overflow: hidden;
+    }
+
+    #tabAnswers .answers-chat-toggle:checked + .answers-conversation-item + .answers-chat-panel {
+      display: grid;
+    }
+
+    #tabAnswers .answers-detail-header,
+    #tabAnswers .answers-detail-body,
+    #tabAnswers .answers-composer {
+      padding: 18px 20px;
+    }
+
+    #tabAnswers .answers-detail-header {
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+    }
+
+    #tabAnswers .answers-detail-body {
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) auto;
+      gap: 14px;
+      min-height: 0;
+    }
+
+    #tabAnswers .answers-thread {
+      min-height: 0;
+      overflow: auto;
+      padding-right: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    #tabAnswers .answers-empty-state {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      gap: 10px;
+      min-height: 420px;
+      padding: 32px;
+      color: var(--muted);
+      border: 1px dashed rgba(249, 115, 22, 0.18);
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.018);
+    }
+
+    #tabAnswers .answers-empty-state h3 {
+      margin: 0;
+    }
+
+    #tabAnswers .answers-bubble {
+      max-width: min(720px, 92%);
+      padding: 14px 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      background: rgba(255, 255, 255, 0.03);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+    }
+
+    #tabAnswers .answers-bubble-user {
+      align-self: flex-start;
+      background: linear-gradient(180deg, rgba(42, 45, 56, 0.92), rgba(22, 24, 31, 0.92));
+      border-color: rgba(148, 163, 184, 0.12);
+      color: #f5f2ec;
+    }
+
+    #tabAnswers .answers-bubble-agent {
+      align-self: flex-end;
+      background: linear-gradient(180deg, rgba(249, 115, 22, 0.24), rgba(194, 65, 12, 0.16));
+      border-color: rgba(249, 115, 22, 0.24);
+      color: #fff7ed;
+    }
+
+    #tabAnswers .answers-bubble-meta {
+      margin: 0 0 8px;
+      font-size: 0.75rem;
+      color: rgba(226, 220, 211, 0.72);
+      letter-spacing: 0.02em;
+    }
+
+    #tabAnswers .answers-bubble-text {
+      margin: 0;
+      font-size: 0.95rem;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    #tabAnswers .answers-suggestion-card {
+      border: 1px solid rgba(249, 115, 22, 0.18);
+      border-radius: 22px;
+      background:
+        linear-gradient(180deg, rgba(249, 115, 22, 0.14), rgba(249, 115, 22, 0.05)),
+        rgba(255, 255, 255, 0.018);
+      padding: 16px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    }
+
+    #tabAnswers .answers-suggestion-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    #tabAnswers .answers-suggestion-copy,
+    #tabAnswers .answers-composer-copy {
+      min-width: 0;
+    }
+
+    #tabAnswers .answers-suggestion-copy h4,
+    #tabAnswers .answers-composer-copy h4 {
+      margin: 0 0 4px;
+    }
+
+    #tabAnswers .answers-suggestion-copy .muted,
+    #tabAnswers .answers-composer-copy .muted {
+      margin: 0;
+    }
+
+    #tabAnswers .answers-suggestion-card textarea,
+    #tabAnswers .answers-composer textarea {
+      margin-top: 12px;
+      margin-bottom: 0;
+      min-height: 148px;
+      resize: vertical;
+    }
+
+    #tabAnswers .answers-composer {
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      background: rgba(9, 9, 13, 0.82);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      bottom: 0;
+    }
+
+    #tabAnswers .answers-composer textarea {
+      min-height: 132px;
+      max-height: 280px;
+    }
+
+    #tabAnswers .answers-composer-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    #tabAnswers .answers-composer-actions .muted {
+      margin: 0;
+    }
+
+    #tabAnswers .answers-primary-action {
+      box-shadow: 0 12px 24px rgba(249, 115, 22, 0.18);
+    }
+
+    #tabAnswers .answers-archived-section {
+      border-style: solid;
+      border-color: rgba(255, 255, 255, 0.05);
+      background: rgba(255, 255, 255, 0.018);
+    }
+
+    .answers-messages {
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 16px;
+      background: rgba(7, 7, 11, 0.62);
+      padding: 12px;
+      max-height: 240px;
       overflow: auto;
       margin-bottom: 10px;
     }
 
     .answers-msg {
-      border-bottom: 1px solid var(--input-border);
-      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      padding: 10px 0;
     }
 
     .answers-msg:last-child {
@@ -496,213 +2517,594 @@ def create_ui_router(job_secret: str) -> APIRouter:
       padding-bottom: 0;
     }
 
+    #list,
+    #reviewedList,
+    #answersArchivedList {
+      display: grid;
+      gap: 14px;
+    }
+
+    @keyframes panelFade {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 1180px) {
+      .app-shell {
+        grid-template-columns: 272px minmax(0, 1fr);
+      }
+
+      .tab-subtitle {
+        display: none;
+      }
+
+      #tabEmail #list {
+        grid-template-columns: minmax(250px, 290px) minmax(0, 1fr);
+      }
+    }
+
     @media (max-width: 980px) {
       .app-shell { grid-template-columns: 1fr; }
-      .sidebar { position: static; }
+      .sidebar {
+        position: static;
+        padding: 18px 16px;
+      }
       body { padding: 14px; }
-      .card { padding: 14px; }
+      .card { padding: 18px 16px; }
+      #tabIssue .issue-console-shell { grid-template-columns: 1fr; }
+      #tabIssue .issue-compact-grid { grid-template-columns: 1fr 1fr; }
+      #tabIssue .issue-history-grid { grid-template-columns: 1fr 1fr; }
       #tabIssue .issue-runtime-grid { grid-template-columns: 1fr; }
-      .theme-floating-btn {
-        top: 10px;
-        right: 10px;
+      .content-topbar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .topbar-actions {
+        justify-content: flex-end;
+      }
+      #tabEmail .email-toolbar,
+      #tabEmail .email-workbench-head {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      #tabEmail .email-toolbar-actions {
+        justify-content: flex-start;
+      }
+      #tabEmail #list,
+      #tabEmail .email-detail-meta,
+      #tabEmail .email-compose-grid,
+      #tabEmail .email-settings-grid {
+        grid-template-columns: 1fr;
+      }
+      #tabEmail .email-summary,
+      #tabEmail .email-detail-panel {
+        grid-column: 1;
+      }
+      #tabEmail .email-detail-panel {
+        grid-row: auto;
+        position: static;
+      }
+      #tabAnswers .answers-toolbar,
+      #tabAnswers .answers-composer-actions {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      #tabAnswers .answers-toolbar-actions {
+        justify-content: stretch;
+      }
+      #tabAnswers .answers-inbox {
+        grid-template-columns: 1fr;
+      }
+      #tabAnswers .answers-chat-panel {
+        grid-column: 1;
+        grid-row: auto;
+        min-height: 0;
+      }
+      #tabWorkday .workday-hero-top,
+      #tabWorkday .workday-section-head,
+      #tabWorkday .workday-terminal-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      #tabWorkday .workday-hero-actions,
+      #tabWorkday .workday-terminal-meta,
+      #tabWorkday .workday-block-actions {
+        justify-content: flex-start;
+      }
+      #tabWorkday .workday-metric-card {
+        grid-column: span 6;
+      }
+      #tabWorkday .workday-metric-card--wide {
+        grid-column: span 12;
+      }
+      #tabWorkday .workday-dual-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .brand-title {
+        font-size: 1.65rem;
+      }
+
+      .page-title {
+        font-size: 1.62rem;
+      }
+
+      .tab-nav {
+        grid-template-columns: auto minmax(0, 1fr);
+      }
+
+      .nav-badge {
+        grid-column: 2;
+        justify-self: start;
+      }
+      #tabIssue .issue-compact-grid,
+      #tabIssue .issue-history-grid {
+        grid-template-columns: 1fr;
+      }
+      #tabIssue .issue-panel-head,
+      #tabIssue .issue-history-card-head {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      #tabEmail .email-summary,
+      #tabEmail .email-detail-panel,
+      #tabEmail .email-settings-body {
+        padding: 16px;
+      }
+      #tabEmail .email-detail-actions {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      #tabEmail .email-action-group {
+        width: 100%;
+      }
+      #tabWorkday .workday-hero-card,
+      #tabWorkday .workday-terminal-card {
+        padding: 18px 16px;
+      }
+      #tabWorkday .workday-metric-strip {
+        grid-template-columns: 1fr;
+      }
+      #tabWorkday .workday-metric-card,
+      #tabWorkday .workday-metric-card--wide {
+        grid-column: auto;
+      }
+      #tabWorkday .workday-date-grid {
+        grid-template-columns: 1fr;
+      }
+      #tabWorkday .workday-hero-actions {
+        width: 100%;
+      }
+      #tabWorkday .workday-hero-actions button,
+      #tabWorkday #workdayRetryWrap,
+      #tabWorkday #workdayRetryWrap button,
+      #tabWorkday .workday-block-actions button {
+        width: 100%;
+      }
+      #tabAnswers .answers-panel-shell,
+      #tabAnswers .answers-detail-header,
+      #tabAnswers .answers-detail-body,
+      #tabAnswers .answers-composer {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+      #tabAnswers .answers-bubble {
+        max-width: 100%;
       }
     }
 </style>
 </head>
 <body>
-  <button onclick="toggleTheme()" id="themeToggle" class="theme-floating-btn" aria-label="Toggle theme" title="Toggle theme">🌙</button>
-
   <div class="app-shell">
     <aside class="sidebar">
-      <h1 class="brand-title">Agent Runner</h1>
-      <p class="muted">Monitor and manage web, email, issue and answers agents in a single interface.</p>
-      <p id="status" role="status" aria-live="polite"></p>
-      <div class="tabs">
-        <button id="tabWorkdayBtn" class="tab-btn active" onclick="showTab('workday')">Web Interaction Agent</button>
-        <button id="tabEmailBtn" class="tab-btn" onclick="showTab('email')">Email Agent</button>
-        <button id="tabIssueBtn" class="tab-btn" onclick="showTab('issue')">Issue Agent</button>
-        <button id="tabAnswersBtn" class="tab-btn" onclick="showTab('answers')">Answers Agent</button>
+      <div class="sidebar-brand">
+        <div class="brand-mark">⚡</div>
+        <div class="brand-copy">
+          <h1 class="brand-title">Agent Runner</h1>
+          <p class="brand-version">__UI_VERSION__</p>
+        </div>
       </div>
+      <p class="sidebar-intro">Monitor and manage web, email, issue and answers agents from one operational workspace.</p>
+      <p class="sidebar-section-label">Agents</p>
+      <div class="tabs">
+        <button id="tabWorkdayBtn" class="tab-btn active" onclick="showTab('workday')">
+          <span class="tab-nav">
+            <span class="tab-icon">🌐</span>
+            <span class="tab-copy">
+              <span class="tab-title">Web Interaction</span>
+              <span class="tab-subtitle">Scheduler and browser runner</span>
+            </span>
+            <span id="tabWorkdayBadge" class="nav-badge" data-variant="neutral">Ready</span>
+          </span>
+        </button>
+        <button id="tabEmailBtn" class="tab-btn" onclick="showTab('email')">
+          <span class="tab-nav">
+            <span class="tab-icon">✉</span>
+            <span class="tab-copy">
+              <span class="tab-title">Email Agent</span>
+              <span class="tab-subtitle">Inbox triage and reply drafting</span>
+            </span>
+            <span id="tabEmailBadge" class="nav-badge is-hidden" data-variant="count"></span>
+          </span>
+        </button>
+        <button id="tabIssueBtn" class="tab-btn" onclick="showTab('issue')">
+          <span class="tab-nav">
+            <span class="tab-icon">⚡</span>
+            <span class="tab-copy">
+              <span class="tab-title">Issue Agent</span>
+              <span class="tab-subtitle">Drafting, warnings and Playwright runs</span>
+            </span>
+            <span id="tabIssueBadge" class="nav-badge" data-variant="neutral">Ready</span>
+          </span>
+        </button>
+        <button id="tabAnswersBtn" class="tab-btn" onclick="showTab('answers')">
+          <span class="tab-nav">
+            <span class="tab-icon">💬</span>
+            <span class="tab-copy">
+              <span class="tab-title">Answers Agent</span>
+              <span class="tab-subtitle">Support chats and suggested replies</span>
+            </span>
+            <span id="tabAnswersBadge" class="nav-badge is-hidden" data-variant="count"></span>
+          </span>
+        </button>
+      </div>
+      <p id="status" role="status" aria-live="polite"></p>
     </aside>
 
     <main class="content-area">
+      <div class="content-topbar">
+        <div class="topbar-copy">
+          <p class="topbar-eyebrow">Operations Console</p>
+          <h2 id="activeTabTitle" class="page-title">Web Interaction Agent</h2>
+          <p id="activeTabMeta" class="muted topbar-meta">Scheduler, click history and runtime logs.</p>
+        </div>
+        <div class="topbar-actions">
+          <button onclick="refreshActivePanel()" id="refreshActivePanelBtn" class="icon-btn ghost-btn" aria-label="Refresh current panel" title="Refresh current panel">↻</button>
+          <button onclick="toggleTheme()" id="themeToggle" class="icon-btn ghost-btn" aria-label="Toggle theme" title="Toggle theme">🌙</button>
+        </div>
+      </div>
+      <div class="content-panels">
   <section id=\"tabWorkday\" class=\"tab-panel active\">
-    <div class=\"card\">
-      <h3>Real-time status</h3>
-      <div id=\"workdayStatusLine\" class=\"kv\">Loading status...</div>
-      <div id=\"workdayTimingLine\" class=\"kv muted\"></div>
-      <div id=\"workdayExpected\" class=\"kv muted\"></div>
-      <button onclick=\"resetWorkdaySession()\" id=\"resetWorkdaySessionBtn\">Reset session</button>
-      <div id=\"workdayRetryWrap\" style=\"display:none;\">
-        <button onclick=\"retryFailedAction()\" id=\"retryFailedBtn\">Retry failed action now</button>
+    <div class=\"card workday-hero-card\">
+      <div class=\"workday-hero-top\">
+        <div class=\"workday-hero-head\">
+          <p class=\"workday-section-kicker\">Operational overview</p>
+          <div class=\"workday-hero-title-row\">
+            <h3>Workday control deck</h3>
+            <span class=\"workday-mini-badge\" data-variant=\"live\">Live sync</span>
+          </div>
+          <p class=\"workday-hero-summary\">Read the current status, action window, scheduling signals and recovery path in one focused control surface.</p>
+        </div>
+        <div class=\"workday-hero-actions\">
+          <button onclick=\"resetWorkdaySession()\" id=\"resetWorkdaySessionBtn\">Reset session</button>
+          <div id=\"workdayRetryWrap\" style=\"display:none;\">
+            <button onclick=\"retryFailedAction()\" id=\"retryFailedBtn\">Retry failed action now</button>
+          </div>
+        </div>
+      </div>
+      <div class=\"workday-metric-strip\">
+        <div class=\"workday-metric-card workday-metric-card--wide\">
+          <span class=\"workday-metric-label\">Current state</span>
+          <div id=\"workdayStatusLine\" class=\"workday-metric-value kv\">Loading status...</div>
+        </div>
+        <div class=\"workday-metric-card\">
+          <span class=\"workday-metric-label\">Live timer</span>
+          <div id=\"workdayTimingLine\" class=\"workday-metric-value muted\"></div>
+        </div>
+        <div class=\"workday-metric-card\">
+          <span class=\"workday-metric-label\">Operating window</span>
+          <div class=\"workday-window-stack\">
+            <strong class=\"workday-window-time\">06:57 - 09:30</strong>
+            <span class=\"muted\">Automatic start window</span>
+          </div>
+        </div>
+        <div class=\"workday-metric-card\">
+          <span class=\"workday-metric-label\">Planned schedule</span>
+          <div id=\"workdayExpected\" class=\"workday-metric-value muted\"></div>
+        </div>
+        <div class=\"workday-metric-card\">
+          <span class=\"workday-metric-label\">Blocked period</span>
+          <div id=\"workdaySettingsStatus\" class=\"workday-metric-value muted\">Loading blocked range...</div>
+        </div>
       </div>
     </div>
-    <div class=\"card\">
-      <h3>Click history (today)</h3>
-      <div id=\"workdayClicks\" class=\"muted\">Loading history...</div>
+    <div class=\"workday-dual-grid\">
+      <div class=\"card\">
+        <div class=\"workday-section-head\">
+          <div>
+            <p class=\"workday-section-kicker\">Today</p>
+            <h3>Click history</h3>
+          </div>
+          <span class=\"workday-mini-badge\" data-variant=\"neutral\">Timeline</span>
+        </div>
+        <div id=\"workdayClicks\" class=\"muted workday-click-stream\">Loading history...</div>
+      </div>
+      <div class=\"card\">
+        <div class=\"workday-section-head\">
+          <div>
+            <p class=\"workday-section-kicker\">Scheduler policy</p>
+            <h3>Blocked days</h3>
+          </div>
+          <span class=\"workday-mini-badge\" data-variant=\"warning\">Auto-start guard</span>
+        </div>
+        <p class=\"muted workday-block-copy\">If today is inside this range, the scheduler will not start requests automatically.</p>
+        <div class=\"workday-date-grid\">
+          <label class=\"workday-date-field\">
+            <span class=\"muted\">Start date</span>
+            <input id=\"workdayBlockedStartDate\" type=\"date\" class=\"field\" />
+          </label>
+          <label class=\"workday-date-field\">
+            <span class=\"muted\">End date</span>
+            <input id=\"workdayBlockedEndDate\" type=\"date\" class=\"field\" />
+          </label>
+        </div>
+        <div class=\"workday-block-actions\">
+          <button onclick=\"saveWorkdaySettings()\" id=\"workdaySaveSettingsBtn\">Save blocked dates</button>
+        </div>
+      </div>
     </div>
-    <div class=\"card\">
-      <h3>Runtime logs (real-time)</h3>
+    <div class=\"card workday-terminal-card\">
+      <div class=\"workday-terminal-toolbar\">
+        <div>
+          <p class=\"workday-section-kicker\">Telemetry</p>
+          <h3>Runtime logs</h3>
+        </div>
+        <div class=\"workday-terminal-meta\">
+          <span class=\"workday-mini-badge\" data-variant=\"neutral\">Real time</span>
+          <span class=\"workday-terminal-hint\">Latest 120 events</span>
+        </div>
+      </div>
       <div id=\"workdayEvents\" class=\"logs\">Loading events...</div>
-    </div>
-    <div class=\"card\">
-      <h3>Blocked days (no auto start)</h3>
-      <p class=\"muted\">If today is inside this range, the scheduler will not start requests automatically.</p>
-      <label class=\"muted\">Start date</label>
-      <input id=\"workdayBlockedStartDate\" type=\"date\" class=\"field\" />
-      <label class=\"muted\">End date</label>
-      <input id=\"workdayBlockedEndDate\" type=\"date\" class=\"field\" />
-      <button onclick=\"saveWorkdaySettings()\" id=\"workdaySaveSettingsBtn\">Save blocked dates</button>
-      <div id=\"workdaySettingsStatus\" class=\"muted\"></div>
     </div>
   </section>
 
   <section id=\"tabEmail\" class=\"tab-panel\">
-    <button onclick=\"checkNew()\" id=\"checkNewBtn\">Check new messages</button>
-    <button onclick=\"openManualModal()\" id=\"manualBtn\">Generate from text</button>
-    <button onclick=\"loadSuggestions()\">Refresh list</button>
-    <button id=\"emailReviewedToggleBtn\" onclick=\"toggleReviewedSuggestions()\">View reviewed</button>
+    <div class=\"card email-toolbar\">
+      <div class=\"email-toolbar-copy\">
+        <h3>Email workbench</h3>
+        <p class=\"muted\">Triage incoming messages, review AI drafts and send polished replies from a support-style inbox layout.</p>
+      </div>
+      <div class=\"email-toolbar-actions\">
+        <button onclick=\"checkNew()\" id=\"checkNewBtn\">Check new messages</button>
+        <button onclick=\"openManualModal()\" id=\"manualBtn\" class=\"ghost-btn\">Generate from text</button>
+        <button onclick=\"loadSuggestions()\" class=\"ghost-btn\">Refresh list</button>
+        <button id=\"emailReviewedToggleBtn\" onclick=\"toggleReviewedSuggestions()\" class=\"ghost-btn\">View reviewed</button>
+      </div>
+    </div>
 
-    <details id=\"emailSettingsDetails\" class=\"settings-dropdown\" open>
+    <details id=\"emailSettingsDetails\" class=\"settings-dropdown email-settings-panel\" open>
       <summary id=\"emailSettingsSummary\">Email settings</summary>
-      <div class=\"card\">
-        <label class=\"muted\">From (fixed)</label>
-        <input id=\"defaultFromEmail\" class=\"field\" readonly />
-        <label class=\"muted\">Default CC (optional)</label>
-        <input id=\"defaultCcEmail\" class=\"field\" placeholder=\"cc1@example.com, cc2@example.com\" />
-        <label class=\"muted\">Signature assets dir</label>
-        <input id=\"signatureAssetsDir\" class=\"field\" placeholder=\"/config/media/signature\" />
-        <label class=\"muted\">Signature</label>
-        <textarea id=\"emailSignature\" class=\"field\" style=\"min-height:90px\" placeholder=\"Best regards,\"></textarea>
-        <p class=\"muted\">Available placeholders: {{logo}}, {{linkedin}}, {{tiktok}}, {{instagram}}, {{twitter}}, {{youtube}}, {{telegram}}</p>
-        <label class=\"muted\">Whitelist</label>
-        <p class=\"muted\">One sender per line (or comma-separated). Only these senders generate suggestions.</p>
-        <textarea id=\"allowedWhitelist\" class=\"field\" style=\"min-height:90px\" placeholder=\"alerts@example.com\"></textarea>
-        <button onclick=\"saveSettings()\" id=\"saveSettingsBtn\">Save email settings</button>
+      <div class=\"card email-settings-body\">
+        <div class=\"email-settings-grid\">
+          <div class=\"email-settings-field\">
+            <label class=\"muted\">From (fixed)</label>
+            <input id=\"defaultFromEmail\" class=\"field\" readonly />
+          </div>
+          <div class=\"email-settings-field\">
+            <label class=\"muted\">Default CC (optional)</label>
+            <input id=\"defaultCcEmail\" class=\"field\" placeholder=\"cc1@example.com, cc2@example.com\" />
+          </div>
+          <div class=\"email-settings-field\">
+            <label class=\"muted\">Signature assets dir</label>
+            <input id=\"signatureAssetsDir\" class=\"field\" placeholder=\"/config/media/signature\" />
+          </div>
+          <div class=\"email-settings-field email-settings-field--full\">
+            <label class=\"muted\">Signature</label>
+            <textarea id=\"emailSignature\" class=\"field\" style=\"min-height:90px\" placeholder=\"Best regards,\"></textarea>
+            <p class=\"muted email-field-note\">Available placeholders: {{logo}}, {{linkedin}}, {{tiktok}}, {{instagram}}, {{twitter}}, {{youtube}}, {{telegram}}</p>
+          </div>
+          <div class=\"email-settings-field email-settings-field--full\">
+            <label class=\"muted\">Whitelist</label>
+            <p class=\"muted email-field-note\">One sender per line or comma-separated. Only these senders generate suggestions.</p>
+            <textarea id=\"allowedWhitelist\" class=\"field\" style=\"min-height:90px\" placeholder=\"alerts@example.com\"></textarea>
+          </div>
+        </div>
+        <div class=\"email-settings-save\">
+          <button onclick=\"saveSettings()\" id=\"saveSettingsBtn\">Save email settings</button>
+        </div>
       </div>
     </details>
-    <div id=\"list\"></div>
-    <div id=\"emailReviewedSection\" class=\"card\" style=\"display:none;\">
+
+    <div class=\"card email-workbench\">
+      <div class=\"email-workbench-head\">
+        <div class=\"email-workbench-copy\">
+          <h3>Suggestion queue</h3>
+          <p class=\"muted\">Use the left inbox rail to switch between messages. The selected draft stays visible on the right for review and sending.</p>
+        </div>
+        <span class=\"email-workbench-pill\">Active queue</span>
+      </div>
+      <div id=\"list\"></div>
+    </div>
+
+    <div id=\"emailReviewedSection\" class=\"card email-reviewed-section\" style=\"display:none;\">
       <h3>Reviewed emails</h3>
-      <p class=\"muted\">Reviewed suggestions are hidden from the active list until unarchived.</p>
+      <p class=\"muted\">Reviewed suggestions stay out of the active queue until unarchived again.</p>
       <div id=\"reviewedList\"></div>
     </div>
   </section>
 
   <section id=\"tabIssue\" class=\"tab-panel\">
-    <div class=\"card\">
-      <h3>Generate issue draft</h3>
-      <div class=\"issue-toggle-group\">
-        <label class=\"issue-toggle\" for=\"issueAddAsComment\">
-          <input type=\"checkbox\" id=\"issueAddAsComment\" class=\"issue-toggle-input\" onchange=\"toggleIssueMode()\" />
-          <span class=\"issue-toggle-track\" aria-hidden=\"true\"><span class=\"issue-toggle-knob\"></span></span>
-          <span class=\"issue-toggle-label\">Add as comment <span class=\"issue-toggle-state\"></span></span>
-        </label>
-      </div>
-      <div id=\"issueIssueTypeRow\">
-        <label class=\"muted\">Issue type</label>
-        <select id=\"issueIssueType\" class=\"field\">
-          <option value=\"bug\">bug</option>
-          <option value=\"feature\">feature</option>
-          <option value=\"task\">task</option>
-          <option value=\"enhacement\">enhacement</option>
-          <option value=\"blockchain\">blockchain</option>
-          <option value=\"exchange\">exchange</option>
-          <option value=\"new feature\">new feature</option>
-          <option value=\"third party bug\">third party bug</option>
-          <option value=\"third party feature\">third party feature</option>
-          <option value=\"third party task\">third party task</option>
-        </select>
-      </div>
-      <div id=\"issueRepoRow\">
-        <label class=\"muted\">Repository</label>
-        <select id=\"issueRepo\" class=\"field\">
-          <option value=\"backend\">backend</option>
-          <option value=\"frontend\">frontend</option>
-          <option value=\"management\">management</option>
-        </select>
-      </div>
-      <div id=\"issueUnitRow\">
-        <label class=\"muted\">Unit</label>
-        <select id=\"issueUnit\" class=\"field\">
-          <option value=\"core\">core</option>
-          <option value=\"customer\">customer</option>
-          <option value=\"bot\">bot</option>
-          <option value=\"integrations\">integrations</option>
-          <option value=\"marketing\">marketing</option>
-          <option value=\"it\">it</option>
-        </select>
-      </div>
-      <div id=\"issueCommentNumberRow\">
-        <label class=\"muted\">Issue number to reply to</label>
-        <input id=\"issueCommentNumber\" class=\"field\" placeholder=\"e.g. 12345\">
-      </div>
-      <div id=\"issueUserInputRow\">
-        <textarea id=\"issueUserInput\" class=\"field\" style=\"min-height:130px\" placeholder=\"Information\"></textarea>
-      </div>
-      <div id=\"issueEnrichLinksRow\" style=\"display:none;\">
-        <label class=\"issue-toggle\" for=\"issueEnrichLinks\">
-          <input type=\"checkbox\" id=\"issueEnrichLinks\" class=\"issue-toggle-input\" />
-          <span class=\"issue-toggle-track\" aria-hidden=\"true\"><span class=\"issue-toggle-knob\"></span></span>
-          <span id=\"issueEnrichLinksLabel\" class=\"issue-toggle-label\">Enrich from detected links</span>
-        </label>
-        <div class=\"muted\">Uses detected external links to complete the new-feature template when the information can be verified.</div>
-      </div>
-      <button onclick=\"generateIssueDraft()\" id=\"issueGenerateBtn\">Generate draft</button>
-      <div id=\"issueGenerateStatus\" class=\"muted\"></div>
-      <div id=\"issueDraftRuntimeGrid\" class=\"issue-runtime-grid\" style=\"display:none;\">
-        <div id=\"issueDraftEditor\" style=\"display:none;\">
-          <div id=\"issueDraftTitleRow\">
-            <label class=\"muted\">Draft title (editable)</label>
-            <input id=\"issueDraftTitle\" class=\"field\" placeholder=\"Draft title\" />
-          </div>
-          <div id=\"issueDraftDescriptionRow\">
-            <label id=\"issueDraftDescriptionLabel\" class=\"muted\">Draft description (editable)</label>
-            <textarea id=\"issueDraftDescription\" class=\"field\" style=\"min-height:120px\" placeholder=\"Draft description\"></textarea>
-          </div>
-          <div id=\"issueDraftStepsRow\" style=\"display:none;\">
-            <label class=\"muted\">Draft steps to reproduce (editable, bug only)</label>
-            <textarea id=\"issueDraftSteps\" class=\"field\" style=\"min-height:110px\" placeholder=\"1. Go to ...&#10;2. Click ...&#10;3. See ...\"></textarea>
-          </div>
-          <div id=\"issueDraftWarningsWrap\" style=\"display:none;\">
-            <label class=\"muted\">Draft warnings</label>
-            <div id=\"issueDraftSourceWarningsWrap\" style=\"display:none; margin-bottom:8px;\">
-              <div class=\"muted\">Warnings from provided links</div>
-              <div id=\"issueDraftSourceWarnings\" class=\"logs\">No source warnings.</div>
+    <div class=\"card issue-console-card\">
+      <div class=\"issue-console-shell\">
+        <div class=\"issue-form-panel\">
+          <div class=\"issue-panel-head\">
+            <div class=\"issue-panel-copy\">
+              <p class=\"issue-panel-kicker\">Drafting console</p>
+              <h3>Generate issue draft</h3>
+              <p class=\"issue-panel-subtitle\">Configure the target, define the briefing and keep the execution mode visible from the start.</p>
             </div>
-            <div id=\"issueDraftUserWarningsWrap\" style=\"display:none;\">
-              <div class=\"muted\">Warnings from missing user input</div>
-              <div id=\"issueDraftUserWarnings\" class=\"logs\">No user warnings.</div>
+            <div class=\"issue-toggle-group\">
+              <label class=\"issue-toggle\" for=\"issueAddAsComment\">
+                <input type=\"checkbox\" id=\"issueAddAsComment\" class=\"issue-toggle-input\" onchange=\"toggleIssueMode()\" />
+                <span class=\"issue-toggle-track\" aria-hidden=\"true\"><span class=\"issue-toggle-knob\"></span></span>
+                <span class=\"issue-toggle-label\">Add as comment <span class=\"issue-toggle-state\"></span></span>
+              </label>
             </div>
           </div>
-          <button onclick=\"submitIssueDraft()\" id=\"issueSubmitBtn\">Run in Playwright</button>
-          <button onclick=\"clearIssueDraft()\" id=\"issueClearDraftBtn\">Clear suggestion (mark as done)</button>
-          <button onclick=\"toggleIssuePlaywrightLog()\" id=\"issueToggleLogBtn\" style=\"display:none;\">Show Playwright log</button>
-          <div id=\"issueSubmitStatus\" class=\"muted\"></div>
+
+          <div class=\"issue-compact-grid\">
+            <div id=\"issueIssueTypeRow\" class=\"issue-field-cell\">
+              <label class=\"muted\">Issue type</label>
+              <select id=\"issueIssueType\" class=\"field\">
+                <option value=\"bug\">bug</option>
+                <option value=\"feature\">feature</option>
+                <option value=\"task\">task</option>
+                <option value=\"enhacement\">enhacement</option>
+                <option value=\"blockchain\">blockchain</option>
+                <option value=\"exchange\">exchange</option>
+                <option value=\"new feature\">new feature</option>
+                <option value=\"third party bug\">third party bug</option>
+                <option value=\"third party feature\">third party feature</option>
+                <option value=\"third party task\">third party task</option>
+              </select>
+            </div>
+            <div id=\"issueRepoRow\" class=\"issue-field-cell\">
+              <label class=\"muted\">Repository</label>
+              <select id=\"issueRepo\" class=\"field\">
+                <option value=\"backend\">backend</option>
+                <option value=\"frontend\">frontend</option>
+                <option value=\"management\">management</option>
+              </select>
+            </div>
+            <div id=\"issueUnitRow\" class=\"issue-field-cell\">
+              <label class=\"muted\">Unit</label>
+              <select id=\"issueUnit\" class=\"field\">
+                <option value=\"core\">core</option>
+                <option value=\"customer\">customer</option>
+                <option value=\"bot\">bot</option>
+                <option value=\"integrations\">integrations</option>
+                <option value=\"marketing\">marketing</option>
+                <option value=\"it\">it</option>
+              </select>
+            </div>
+          </div>
+
+          <div id=\"issueCommentNumberRow\" class=\"issue-field-row\">
+            <label class=\"muted\">Issue number to reply to</label>
+            <input id=\"issueCommentNumber\" class=\"field\" placeholder=\"e.g. 12345\">
+          </div>
+
+          <div id=\"issueEnrichLinksRow\" style=\"display:none;\">
+            <label class=\"issue-toggle\" for=\"issueEnrichLinks\">
+              <input type=\"checkbox\" id=\"issueEnrichLinks\" class=\"issue-toggle-input\" />
+              <span class=\"issue-toggle-track\" aria-hidden=\"true\"><span class=\"issue-toggle-knob\"></span></span>
+              <span id=\"issueEnrichLinksLabel\" class=\"issue-toggle-label\">Enrich from detected links</span>
+            </label>
+            <div class=\"muted\">Uses detected external links to complete the new-feature template when the information can be verified.</div>
+          </div>
+
+          <div id=\"issueUserInputRow\" class=\"issue-input-stage\">
+            <label class=\"muted\">Issue briefing</label>
+            <textarea id=\"issueUserInput\" class=\"field\" style=\"min-height:130px\" placeholder=\"Information\"></textarea>
+          </div>
+
+          <div class=\"issue-form-actions\">
+            <button onclick=\"generateIssueDraft()\" id=\"issueGenerateBtn\">Generate draft</button>
+            <div id=\"issueGenerateStatus\" class=\"muted\"></div>
+          </div>
         </div>
-        <div id=\"issuePlaywrightLogWrap\" class=\"issue-log-panel\" style=\"display:none;\">
-          <h4 class=\"issue-log-title\">Playwright execution log</h4>
-          <div id=\"issuePlaywrightLog\" class=\"logs\">No execution logs yet.</div>
+
+        <div class=\"issue-draft-panel\">
+          <div class=\"issue-panel-head\">
+            <div class=\"issue-panel-copy\">
+              <p class=\"issue-panel-kicker\">Generated draft</p>
+              <h3>Review, adjust and execute</h3>
+              <p class=\"issue-panel-subtitle\">Warnings, editable fields and Playwright execution stay grouped in a single warm workspace.</p>
+            </div>
+          </div>
+
+          <div id=\"issueDraftRuntimeGrid\" class=\"issue-runtime-grid\" style=\"display:none;\">
+            <div id=\"issueDraftEditor\" style=\"display:none;\">
+              <div id=\"issueDraftTitleRow\" class=\"issue-field-row\">
+                <label class=\"muted\">Draft title (editable)</label>
+                <input id=\"issueDraftTitle\" class=\"field\" placeholder=\"Draft title\" />
+              </div>
+              <div id=\"issueDraftDescriptionRow\" class=\"issue-field-row\">
+                <label id=\"issueDraftDescriptionLabel\" class=\"muted\">Draft description (editable)</label>
+                <textarea id=\"issueDraftDescription\" class=\"field\" style=\"min-height:120px\" placeholder=\"Draft description\"></textarea>
+              </div>
+              <div id=\"issueDraftStepsRow\" class=\"issue-field-row\" style=\"display:none;\">
+                <label class=\"muted\">Draft steps to reproduce (editable, bug only)</label>
+                <textarea id=\"issueDraftSteps\" class=\"field\" style=\"min-height:110px\" placeholder=\"1. Go to ...&#10;2. Click ...&#10;3. See ...\"></textarea>
+              </div>
+              <div id=\"issueDraftWarningsWrap\" style=\"display:none;\">
+                <label class=\"muted\">Draft warnings</label>
+                <div id=\"issueDraftSourceWarningsWrap\" style=\"display:none; margin-bottom:8px;\">
+                  <div class=\"muted\">Warnings from provided links</div>
+                  <div id=\"issueDraftSourceWarnings\" class=\"logs\">No source warnings.</div>
+                </div>
+                <div id=\"issueDraftUserWarningsWrap\" style=\"display:none;\">
+                  <div class=\"muted\">Warnings from missing user input</div>
+                  <div id=\"issueDraftUserWarnings\" class=\"logs\">No user warnings.</div>
+                </div>
+              </div>
+              <div class=\"issue-draft-actions\">
+                <button onclick=\"submitIssueDraft()\" id=\"issueSubmitBtn\">Run in Playwright</button>
+                <button onclick=\"clearIssueDraft()\" id=\"issueClearDraftBtn\">Clear suggestion (mark as done)</button>
+                <button onclick=\"toggleIssuePlaywrightLog()\" id=\"issueToggleLogBtn\" style=\"display:none;\">Show Playwright log</button>
+              </div>
+              <div id=\"issueSubmitStatus\" class=\"muted issue-draft-status\"></div>
+            </div>
+            <div id=\"issuePlaywrightLogWrap\" class=\"issue-log-panel\" style=\"display:none;\">
+              <h4 class=\"issue-log-title\">Playwright execution log</h4>
+              <div id=\"issuePlaywrightLog\" class=\"logs\">No execution logs yet.</div>
+            </div>
+          </div>
+          <pre id=\"issueGeneratedJson\" style=\"display:none;\">{}</pre>
         </div>
       </div>
-      <pre id=\"issueGeneratedJson\" style=\"display:none;\">{}</pre>
     </div>
-    <div class=\"card\">
-      <div style=\"display:flex; gap:8px; align-items:center; justify-content:space-between;\">
-        <h3 style=\"margin:0;\">Run history</h3>
-        <button onclick=\"toggleIssueHistoryCard()\" id=\"issueHistoryCardToggleBtn\">Show run history</button>
-      </div>
-      <div id=\"issueHistoryCardBody\" style=\"display:none; margin-top:12px;\">
-        <div id=\"issueRunTools\">
-          <label class=\"muted\">Run ID / historical log</label>
-          <input id=\"issueRunId\" class=\"field\" placeholder=\"issue-YYYYMMDD-HHMMSS\" oninput=\"updateIssueRunControls()\">
-          <div id=\"issueRunResolvedState\" class=\"muted\">Run status: no active run</div>
-          <select id=\"issueRecentRunsList\" class=\"field\" onchange=\"selectIssueRecentRun()\">
-            <option value=\"\">Recent runs will appear here</option>
-          </select>
-          <button onclick=\"listIssueRecentRuns()\" id=\"issueListRunsBtn\">List recent runs</button>
-          <button onclick=\"loadIssueHistoryLog()\" id=\"issueLoadHistoryBtn\">View historical log</button>
+
+    <div class=\"card issue-history-card\">
+      <div class=\"issue-history-card-head\">
+        <div class=\"issue-panel-copy\">
+          <p class=\"issue-panel-kicker\">Run history</p>
+          <h3>Historical runs & execution log</h3>
+          <p class=\"issue-panel-subtitle\">Load previous execution traces by run id, inspect the historical log and close the review loop on older runs.</p>
         </div>
+        <div class=\"issue-history-toolbar\">
+          <div class=\"issue-status-pills\" aria-hidden=\"true\">
+            <span class=\"issue-status-pill issue-status-pill--submitted\">Submitted</span>
+            <span class=\"issue-status-pill issue-status-pill--resolved\">Resolved</span>
+            <span class=\"issue-status-pill issue-status-pill--failed\">Failed</span>
+          </div>
+          <button onclick=\"toggleIssueHistoryCard()\" id=\"issueHistoryCardToggleBtn\">Show run history</button>
+        </div>
+      </div>
+
+      <div id=\"issueHistoryCardBody\" class=\"issue-history-card-body\" style=\"display:none; margin-top:12px;\">
+        <div id=\"issueRunTools\">
+          <div class=\"issue-history-grid\">
+            <div class=\"issue-history-field\">
+              <label class=\"muted\">Run ID / historical log</label>
+              <input id=\"issueRunId\" class=\"field\" placeholder=\"issue-YYYYMMDD-HHMMSS\" oninput=\"updateIssueRunControls()\">
+            </div>
+            <div class=\"issue-history-field\">
+              <label class=\"muted\">Run status</label>
+              <div id=\"issueRunResolvedState\" class=\"issue-run-status\">Run status: no active run</div>
+            </div>
+            <div class=\"issue-history-field\">
+              <label class=\"muted\">Recent runs</label>
+              <select id=\"issueRecentRunsList\" class=\"field\" onchange=\"selectIssueRecentRun()\">
+                <option value=\"\">Recent runs will appear here</option>
+              </select>
+            </div>
+          </div>
+
+          <div class=\"issue-history-actions\">
+            <button onclick=\"listIssueRecentRuns()\" id=\"issueListRunsBtn\">List recent runs</button>
+            <button onclick=\"loadIssueHistoryLog()\" id=\"issueLoadHistoryBtn\">View historical log</button>
+          </div>
+        </div>
+
         <div id=\"issueHistoryLogWrap\" class=\"issue-log-panel\" style=\"display:none;\">
           <div style=\"display:flex; gap:8px; align-items:center; justify-content:space-between; margin-bottom:8px;\">
             <h4 class=\"issue-log-title\" style=\"margin:0;\">Historical execution log</h4>
@@ -718,15 +3120,27 @@ def create_ui_router(job_secret: str) -> APIRouter:
   </section>
 
   <section id=\"tabAnswers\" class=\"tab-panel\">
-    <button onclick=\"loadAnswersChats()\">Refresh chats</button>
-    <button id=\"answersArchivedToggleBtn\" onclick=\"toggleArchivedAnswers()\">View archived</button>
-    <div id=\"answersList\"></div>
-    <div id=\"answersArchivedSection\" class=\"card\" style=\"display:none;\">
+    <div class=\"card answers-panel-shell\">
+      <div class=\"answers-toolbar\">
+        <div class=\"answers-toolbar-copy\">
+          <div class=\"answers-toolbar-kicker\">Support Inbox</div>
+          <h3>Answers Agent</h3>
+          <p class=\"muted\">Review live conversations, refine AI suggestions, and reply from a single support workspace.</p>
+        </div>
+        <div class=\"answers-toolbar-actions\">
+          <button onclick=\"loadAnswersChats()\">Refresh chats</button>
+          <button id=\"answersArchivedToggleBtn\" onclick=\"toggleArchivedAnswers()\">View archived</button>
+        </div>
+      </div>
+      <div id=\"answersList\"></div>
+    </div>
+    <div id=\"answersArchivedSection\" class=\"card answers-archived-section\" style=\"display:none;\">
       <h3>Archived conversations</h3>
       <p class=\"muted\">Archived conversations are auto-deleted after 7 days.</p>
       <div id=\"answersArchivedList\"></div>
     </div>
   </section>
+      </div>
 
       </main>
   </div>
@@ -908,12 +3322,72 @@ function buildReplySubject(subject) {
   return `RE: ${clean}`;
 }
 
+const TAB_META = {
+  workday: {
+    title: 'Web Interaction Agent',
+    subtitle: 'Scheduler, click history and runtime logs.'
+  },
+  email: {
+    title: 'Email Agent',
+    subtitle: 'Suggestions, sender settings and response workflows.'
+  },
+  issue: {
+    title: 'Issue Agent',
+    subtitle: 'Draft generation, warnings and Playwright-assisted execution.'
+  },
+  answers: {
+    title: 'Answers Agent',
+    subtitle: 'Support chats, AI suggestions and outbound replies.'
+  }
+};
+
+function updateTopbar(name) {
+  const meta = TAB_META[String(name || '').trim()] || TAB_META.workday;
+  const title = document.getElementById('activeTabTitle');
+  const subtitle = document.getElementById('activeTabMeta');
+  if (title) title.innerText = meta.title;
+  if (subtitle) subtitle.innerText = meta.subtitle;
+}
+
+function setSidebarBadge(id, text, variant) {
+  const badge = document.getElementById(id);
+  if (!badge) return;
+  const clean = String(text || '').trim();
+  badge.innerText = clean;
+  badge.dataset.variant = String(variant || 'neutral');
+  badge.classList.toggle('is-hidden', !clean);
+}
+
+async function refreshActivePanel() {
+  if (activeTab === 'workday') {
+    await refreshWorkdayPanel();
+    await loadWorkdaySettings();
+    return;
+  }
+  if (activeTab === 'email') {
+    await loadSettings();
+    await loadSuggestions();
+    if (emailReviewedVisible) await loadReviewedSuggestions();
+    return;
+  }
+  if (activeTab === 'issue') {
+    renderIssueDraftEditor();
+    await listIssueRecentRuns();
+    return;
+  }
+  if (activeTab === 'answers') {
+    await loadAnswersChats();
+    if (answersArchivedVisible) await loadArchivedAnswersChats();
+  }
+}
+
 function showTab(name) {
   activeTab = name;
   const isWorkday = name === 'workday';
   const isEmail = name === 'email';
   const isIssue = name === 'issue';
   const isAnswers = name === 'answers';
+  updateTopbar(name);
   document.getElementById('tabWorkday').classList.toggle('active', isWorkday);
   document.getElementById('tabEmail').classList.toggle('active', isEmail);
   document.getElementById('tabIssue').classList.toggle('active', isIssue);
@@ -1082,6 +3556,25 @@ async function loadWorkdayStatus() {
     const phase = String(data.phase || 'unknown');
     const phaseText = phaseLabel(phase);
     const message = String(data.message || '');
+    const workdayBadgeText = data.blocked_today && phase === 'before_start'
+      ? 'Blocked'
+      : phase === 'failed'
+      ? 'Fail'
+      : phase === 'completed'
+      ? 'Done'
+      : phase === 'before_start'
+      ? 'Ready'
+      : 'Live';
+    const workdayBadgeVariant = data.blocked_today && phase === 'before_start'
+      ? 'warning'
+      : phase === 'failed'
+      ? 'danger'
+      : phase === 'completed'
+      ? 'success'
+      : phase === 'before_start'
+      ? 'neutral'
+      : 'live';
+    setSidebarBadge('tabWorkdayBadge', workdayBadgeText, workdayBadgeVariant);
     document.getElementById('workdayStatusLine').innerHTML = `<b>Phase:</b> ${escapeHtml(phaseText)}<br/><b>Status:</b> ${escapeHtml(message)}`;
 
     syncWorkdayTickerFromStatus(data);
@@ -1111,6 +3604,7 @@ async function loadWorkdayStatus() {
     const retryable = phase === 'failed' && !!String(data.failed_phase || '').trim();
     retryWrap.style.display = retryable ? 'block' : 'none';
   } catch (err) {
+    setSidebarBadge('tabWorkdayBadge', 'Error', 'danger');
     document.getElementById('workdayStatusLine').innerText = `Error loading workday status: ${err}`;
   }
 }
@@ -1547,6 +4041,7 @@ function renderIssueDraftEditor() {
   const jsonBox = document.getElementById('issueGeneratedJson');
   if (!box) return;
   if (!currentIssue) {
+    setSidebarBadge('tabIssueBadge', 'Ready', 'neutral');
     box.style.display = 'none';
     if (runtimeGrid) runtimeGrid.style.display = 'none';
     clearIssuePlaywrightLog(true);
@@ -1575,6 +4070,7 @@ function renderIssueDraftEditor() {
   const sourceWarnings = Array.isArray(draftWarnings.source) ? draftWarnings.source : [];
   const userWarnings = Array.isArray(draftWarnings.user) ? draftWarnings.user : [];
   const hasWarnings = sourceWarnings.length || userWarnings.length;
+  setSidebarBadge('tabIssueBadge', hasWarnings ? 'Warn' : 'Draft', hasWarnings ? 'warning' : 'count');
   if (title) title.value = String(currentIssue.title || '');
   if (titleRow) titleRow.style.display = isCommentMode ? 'none' : 'block';
   if (descriptionLabel) {
@@ -2623,53 +5119,142 @@ async function loadAnswersChats() {
     data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
   } catch (err) {
+    setSidebarBadge('tabAnswersBadge', '!', 'danger');
     setStatus(`Error loading answers chats: ${err}`);
     return;
   }
 
+  const chatItems = Array.isArray(data.items) ? data.items : [];
+  setSidebarBadge('tabAnswersBadge', chatItems.length ? String(chatItems.length) : '', 'count');
   list.innerHTML = '';
-  if (!Array.isArray(data.items) || data.items.length === 0) {
-    list.innerHTML = `<div class="card"><p class="muted">No chats with received messages yet.</p></div>`;
+  if (chatItems.length === 0) {
+    list.innerHTML = `
+      <div class="answers-inbox">
+        <div class="answers-sidebar-summary">
+          <div>
+            <span>Active conversations</span>
+            <strong>Answers queue</strong>
+          </div>
+          <div class="answers-sidebar-count">0</div>
+        </div>
+        <div class="answers-empty-state">
+          <h3>No chats with received messages yet.</h3>
+          <p class="muted">When a new Telegram message arrives, it will appear here with a suggested reply and quick actions.</p>
+        </div>
+      </div>
+    `;
     return;
   }
 
-  for (const item of data.items) {
+  const inboxMarkup = chatItems.map((item, index) => {
     const chatId = String(item.chat_id || '');
+    const toggleId = `answers-chat-toggle-${safeDomId(chatId)}`;
     const safeReplyId = answersReplyAreaId(chatId);
     const messages = Array.isArray(item.received_messages) ? item.received_messages : [];
+    const lastMessage = messages.length
+      ? String(messages[messages.length - 1].content || '').trim()
+      : 'No user messages in this chat.';
     const renderedMessages = messages.length
       ? messages.map((message) => {
           const ts = formatTs(message.timestamp);
           const content = String(message.content || '').trim();
           const name = String(message.name || item.name || '').trim();
           return `
-            <div class="answers-msg">
-              <div class="muted">${escapeHtml(ts)} | Chat ${escapeHtml(chatId)} | ${escapeHtml(name)}</div>
-              <div>${escapeHtml(content)}</div>
+            <div class="answers-bubble answers-bubble-user">
+              <p class="answers-bubble-meta">${escapeHtml(name)} · ${escapeHtml(ts)}</p>
+              <p class="answers-bubble-text">${escapeHtml(content)}</p>
             </div>
           `;
         }).join('')
-      : `<div class="muted">No user messages in this chat.</div>`;
+      : `<div class="answers-empty-state"><p class="muted">No user messages in this chat.</p></div>`;
+    const status = String(item.status || 'pending').toLowerCase();
+    const suggestionText = String(item.suggested_reply || '').trim();
 
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.innerHTML = `
-      <div><b>${escapeHtml(item.name || '')}</b> · Chat ${escapeHtml(chatId)}</div>
-      <div class="muted">Status: ${escapeHtml(item.status || 'pending')} | Received messages: ${escapeHtml(item.received_count || 0)} | Last: ${escapeHtml(formatTs(item.last_received_ts))}</div>
-      <p><b>Received messages</b></p>
-      <div class="answers-messages">${renderedMessages}</div>
-      <p><b>Suggested reply</b></p>
-      <textarea id="${safeReplyId}" class="field" style="min-height:120px">${escapeHtml(item.suggested_reply || '')}</textarea>
-      <div>
-        <button onclick="requestAnswersAiSuggestion('${escapeHtml(chatId)}')">AI suggest</button>
-        <button onclick="openAnswersSuggestModal('${escapeHtml(chatId)}')">Suggest changes</button>
-        <button onclick="sendAnswersReply('${escapeHtml(chatId)}')">Send reply</button>
-        <button onclick="markAnswersReviewed('${escapeHtml(chatId)}')">Mark reviewed</button>
-        <button onclick="markAnswersSpam('${escapeHtml(chatId)}')">Mark spam</button>
-      </div>
+    return `
+      <input type="radio" class="answers-chat-toggle" name="answers-active-chat" id="${toggleId}" ${index === 0 ? 'checked' : ''}>
+      <label class="answers-conversation-item" for="${toggleId}">
+        <div class="answers-conversation-top">
+          <div>
+            <p class="answers-conversation-name">${escapeHtml(item.name || `Chat ${chatId}`)}</p>
+            <p class="answers-conversation-meta">Telegram · Chat ${escapeHtml(chatId)}</p>
+          </div>
+          <span class="answers-status-chip" data-status="${escapeHtml(status)}">${escapeHtml(status)}</span>
+        </div>
+        <p class="answers-conversation-preview">${escapeHtml(lastMessage || 'No preview available.')}</p>
+        <div class="answers-conversation-foot">
+          <span>${escapeHtml(formatTs(item.last_received_ts))}</span>
+          <span class="answers-conversation-count">${escapeHtml(item.received_count || 0)} msgs</span>
+        </div>
+      </label>
+      <section class="answers-chat-panel">
+        <div class="answers-detail-header">
+          <div class="answers-detail-head">
+            <div>
+              <h3 class="answers-chat-title">${escapeHtml(item.name || `Chat ${chatId}`)}</h3>
+              <p class="answers-chat-submeta">Telegram support conversation · Chat ${escapeHtml(chatId)} · Last message ${escapeHtml(formatTs(item.last_received_ts))}</p>
+            </div>
+            <div class="answers-detail-chips">
+              <span class="answers-channel-chip">Telegram</span>
+              <span class="answers-status-chip" data-status="${escapeHtml(status)}">${escapeHtml(status)}</span>
+            </div>
+          </div>
+        </div>
+        <div class="answers-detail-body">
+          <div class="answers-thread">
+            ${renderedMessages}
+            ${suggestionText ? `
+              <div class="answers-bubble answers-bubble-agent">
+                <p class="answers-bubble-meta">Suggested reply</p>
+                <p class="answers-bubble-text">${escapeHtml(suggestionText)}</p>
+              </div>
+            ` : ''}
+          </div>
+          <div class="answers-suggestion-card">
+            <div class="answers-suggestion-head">
+              <div class="answers-suggestion-copy">
+                <h4>AI suggestion</h4>
+                <p class="muted">Refine the draft before sending, or generate a new version if the context changed.</p>
+              </div>
+              <span class="answers-channel-chip">Warm draft</span>
+            </div>
+            <textarea class="field" readonly>${escapeHtml(suggestionText || 'No AI suggestion yet. Use AI suggest or Suggest changes to create one.')}</textarea>
+            <div class="answers-suggestion-actions">
+              <button onclick="requestAnswersAiSuggestion('${escapeHtml(chatId)}')">AI suggest</button>
+              <button onclick="openAnswersSuggestModal('${escapeHtml(chatId)}')">Suggest changes</button>
+              <button onclick="markAnswersReviewed('${escapeHtml(chatId)}')">Mark reviewed</button>
+              <button onclick="markAnswersSpam('${escapeHtml(chatId)}')">Mark spam</button>
+            </div>
+          </div>
+        </div>
+        <div class="answers-composer">
+          <div class="answers-composer-head">
+            <div class="answers-composer-copy">
+              <h4>Reply composer</h4>
+              <p class="muted">Final check before sending to the user.</p>
+            </div>
+          </div>
+          <textarea id="${safeReplyId}" class="field" style="min-height:120px" placeholder="Write or refine the reply before sending.">${escapeHtml(item.suggested_reply || '')}</textarea>
+          <div class="answers-composer-actions">
+            <p class="muted">Next action: send the prepared reply or generate a fresh AI draft.</p>
+            <button class="answers-primary-action" onclick="sendAnswersReply('${escapeHtml(chatId)}')">Send reply</button>
+          </div>
+        </div>
+      </section>
     `;
-    list.appendChild(card);
-  }
+  }).join('');
+
+  list.innerHTML = `
+    <div class="answers-inbox">
+      <div class="answers-sidebar-summary">
+        <div>
+          <span>Active conversations</span>
+          <strong>Support queue</strong>
+        </div>
+        <div class="answers-sidebar-count">${escapeHtml(chatItems.length)}</div>
+      </div>
+      ${inboxMarkup}
+    </div>
+  `;
 }
 
 async function loadSuggestions() {
@@ -2679,6 +5264,7 @@ async function loadSuggestions() {
     data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
   } catch (err) {
+    setSidebarBadge('tabEmailBadge', '!', 'danger');
     setStatus(`Error loading suggestions: ${err}`);
     return;
   }
@@ -2686,34 +5272,127 @@ async function loadSuggestions() {
   const activeItems = Array.isArray(data.items)
     ? data.items.filter((item) => String(item.status || 'draft') !== 'reviewed')
     : [];
+  setSidebarBadge('tabEmailBadge', activeItems.length ? String(activeItems.length) : '', 'count');
   list.innerHTML = '';
   if (activeItems.length === 0) {
-    list.innerHTML = `<div class="card"><p class="muted">No suggestions yet. Use <b>Check new messages</b> or <b>Generate from text</b>.</p></div>`;
+    list.innerHTML = `<div class="card email-empty-state"><p class="muted">No suggestions yet. Use <b>Check new messages</b> or <b>Generate from text</b>.</p></div>`;
     return;
   }
-  for (const item of activeItems.reverse()) {
+
+  const orderedItems = activeItems.slice().reverse();
+  for (const [index, item] of orderedItems.entries()) {
     const div = document.createElement('div');
-    div.className = 'card';
+    div.className = 'email-entry';
     const safeId = String(item.suggestion_id || '');
+    const selectId = `email-select-${safeId}`;
     const replySubject = buildReplySubject(item.subject);
     const currentTo = String(item.sent_to || '');
     const currentCc = String(item.sent_cc || emailSettingsCache.default_cc_email || '');
+    const rawStatus = String(item.status || 'draft').trim().toLowerCase();
+    const statusLabel = rawStatus === 'reviewed'
+      ? 'Reviewed'
+      : rawStatus === 'spam'
+      ? 'Spam'
+      : rawStatus === 'archived'
+      ? 'Archive'
+      : rawStatus === 'sent'
+      ? 'Sent'
+      : rawStatus === 'copied'
+      ? 'Copied'
+      : 'Pending';
+    const statusClass = rawStatus === 'reviewed'
+      ? 'is-reviewed'
+      : rawStatus === 'spam'
+      ? 'is-spam'
+      : rawStatus === 'archived'
+      ? 'is-archive'
+      : rawStatus === 'sent'
+      ? 'is-sent'
+      : rawStatus === 'copied'
+      ? 'is-copied'
+      : 'is-pending';
+    const originalBody = String(item.original_body || '');
+    const flattenedPreview = originalBody.replace(/\\s+/g, ' ').trim();
+    const preview = flattenedPreview.length > 180 ? `${flattenedPreview.slice(0, 177)}...` : flattenedPreview;
+    const updatedAt = String(item.updated_at || item.created_at || '').trim();
+    const updatedLabel = updatedAt ? formatTs(updatedAt) : 'Just now';
+    const checkedAttr = index === 0 ? 'checked' : '';
     div.innerHTML = `
-      <div><b>${escapeHtml(item.subject)}</b></div>
-      <div class='muted'>From: ${escapeHtml(item.from)} | Status: ${escapeHtml(item.status)}</div>
-      <p><b>Original</b></p>
-      <textarea class='field email-original' readonly>${escapeHtml(item.original_body || '')}</textarea>
-      <p><b>Suggested reply</b></p>
-      <textarea id='reply-${safeId}'></textarea>
-      <p><b>Compose email</b></p>
-      <input id='to-${safeId}' class='field' placeholder='Recipient email' value='${escapeHtml(currentTo)}'>
-      <input id='cc-${safeId}' class='field' placeholder='CC emails (optional, comma-separated)' value='${escapeHtml(currentCc)}'>
-      <input class='field' readonly value='Subject: ${escapeHtml(replySubject)}'>
-      <div>
-        <button onclick="openSuggestionModal('${safeId}')">Suggest changes</button>
-        <button onclick="copyText('${safeId}')">Copy</button>
-        <button onclick="sendSuggestion('${safeId}')">Send email</button>
-        <button onclick="markStatus('${safeId}','reviewed')">Mark reviewed</button>
+      <input type='radio' name='email-active-ticket' id='${safeId ? escapeHtml(selectId) : ''}' class='email-select' ${checkedAttr}>
+      <label for='${safeId ? escapeHtml(selectId) : ''}' class='email-summary'>
+        <div class='email-summary-top'>
+          <span class='email-badge ${statusClass}'>${escapeHtml(statusLabel)}</span>
+          <span class='email-summary-time'>${escapeHtml(updatedLabel)}</span>
+        </div>
+        <h4 class='email-summary-subject'>${escapeHtml(item.subject || '(no subject)')}</h4>
+        <div class='email-summary-from'>${escapeHtml(item.from || 'Unknown sender')}</div>
+        <div class='email-summary-preview'>${escapeHtml(preview || 'No preview available yet.')}</div>
+      </label>
+      <div class='card email-detail-panel'>
+        <div class='email-detail-header'>
+          <div>
+            <div class='email-detail-kicker'>Selected message</div>
+            <h3 class='email-detail-title'>${escapeHtml(item.subject || '(no subject)')}</h3>
+          </div>
+          <span class='email-badge ${statusClass}'>${escapeHtml(statusLabel)}</span>
+        </div>
+
+        <div class='email-detail-meta'>
+          <div class='email-meta-block'>
+            <span class='email-meta-label'>From</span>
+            <span class='email-meta-value'>${escapeHtml(item.from || 'Unknown sender')}</span>
+          </div>
+          <div class='email-meta-block'>
+            <span class='email-meta-label'>Updated</span>
+            <span class='email-meta-value'>${escapeHtml(updatedLabel)}</span>
+          </div>
+        </div>
+
+        <div class='email-detail-sections'>
+          <section class='email-panel-section'>
+            <div class='email-section-heading'>Original email</div>
+            <textarea class='field email-original' readonly>${escapeHtml(originalBody)}</textarea>
+          </section>
+
+          <section class='card warm-card email-ai-card'>
+            <div class='email-section-heading-row'>
+              <div class='email-section-heading'>AI suggestion</div>
+              <span class='email-section-note'>Edit directly before sending if needed</span>
+            </div>
+            <textarea id='reply-${safeId}' class='field email-ai-compose'></textarea>
+          </section>
+
+          <section class='email-compose-panel'>
+            <div class='email-section-heading'>Compose reply</div>
+            <div class='email-compose-grid'>
+              <div class='email-field-group'>
+                <label class='muted' for='to-${safeId}'>Recipient</label>
+                <input id='to-${safeId}' class='field' placeholder='Recipient email' value='${escapeHtml(currentTo)}'>
+              </div>
+              <div class='email-field-group'>
+                <label class='muted' for='cc-${safeId}'>CC</label>
+                <input id='cc-${safeId}' class='field' placeholder='CC emails (optional, comma-separated)' value='${escapeHtml(currentCc)}'>
+              </div>
+              <div class='email-field-group email-field-group--wide'>
+                <label class='muted'>Subject</label>
+                <input class='field' readonly value='${escapeHtml(replySubject)}'>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class='email-detail-actions'>
+          <div class='email-action-group'>
+            <button onclick="sendSuggestion('${safeId}')">Send</button>
+            <button onclick="openSuggestionModal('${safeId}')" class='ghost-btn'>Regenerate</button>
+            <button onclick="document.getElementById('reply-${safeId}').focus()" class='ghost-btn'>Edit</button>
+          </div>
+          <div class='email-action-group'>
+            <button onclick="copyText('${safeId}')" class='ghost-btn'>Copy</button>
+            <button type='button' class='ghost-btn' disabled title='Spam status is not available in the current email flow'>Spam</button>
+            <button onclick="markStatus('${safeId}','reviewed')" class='ghost-btn'>Archive</button>
+          </div>
+        </div>
       </div>
     `;
     list.appendChild(div);
@@ -2759,14 +5438,19 @@ async function loadReviewedSuggestions() {
   for (const item of reviewedItems.reverse()) {
     const safeId = String(item.suggestion_id || '');
     const card = document.createElement('div');
-    card.className = 'card';
+    card.className = 'card email-reviewed-card';
     card.innerHTML = `
-      <div><b>${escapeHtml(item.subject || '')}</b></div>
-      <div class='muted'>From: ${escapeHtml(item.from || '')} | Reviewed: ${escapeHtml(formatTs(item.reviewed_at || item.updated_at))}</div>
-      <p><b>Suggested reply</b></p>
+      <div class='email-reviewed-head'>
+        <div>
+          <h4 class='email-reviewed-title'>${escapeHtml(item.subject || '(no subject)')}</h4>
+          <div class='muted'>From: ${escapeHtml(item.from || '')} | Reviewed: ${escapeHtml(formatTs(item.reviewed_at || item.updated_at))}</div>
+        </div>
+        <span class='email-badge is-reviewed'>Reviewed</span>
+      </div>
+      <div class='email-section-heading'>Suggested reply</div>
       <textarea class='field' style='min-height:100px' readonly>${escapeHtml(item.suggested_reply || '')}</textarea>
-      <div>
-        <button onclick="markStatus('${safeId}','draft')">Unarchive</button>
+      <div class='email-reviewed-actions'>
+        <button onclick="markStatus('${safeId}','draft')" class='ghost-btn'>Unarchive</button>
       </div>
     `;
     list.appendChild(card);
@@ -2788,7 +5472,7 @@ workdayPollTimer = setInterval(() => {
 </script>
 </body>
 </html>
-            """.strip()
+            """.strip().replace("__UI_VERSION__", UI_VERSION)
         )
 
     return router
