@@ -270,11 +270,16 @@ class IssueAgentService:
     def _playwright_step(self, message: str, **meta: Any) -> None:
         # Short live step events consumed by the UI Playwright panel during submit.
         run_id = str(getattr(self, "_active_run_id", "") or "").strip()
+        compact_meta_parts: List[str] = []
         payload: Dict[str, Any] = {"run_id": run_id, "message": str(message or "").strip()}
         for key, value in meta.items():
             text = str(value or "").strip()
             if text:
-                payload[key] = text[:120]
+                trimmed = text[:120]
+                payload[key] = trimmed
+                compact_meta_parts.append(f"{key}={trimmed[:48]}")
+        if compact_meta_parts:
+            payload["message"] = f"{payload['message']} | {'; '.join(compact_meta_parts[:3])}"
         self._append_event("issue_playwright_step", **payload)
 
     # Weekly cleanup state is tracked in a small sidecar file to avoid running cleanup

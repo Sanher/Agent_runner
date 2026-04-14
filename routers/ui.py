@@ -4426,21 +4426,29 @@ function extractIssueUrlFromRunEvents(items, runId) {
   return '';
 }
 
-async function reconcileIssueSubmitByRunId(runId, attempts = 30, waitMs = 2000) {
+async function reconcileIssueSubmitByRunId(runId, attempts = 45, waitMs = 2500) {
   if (!runId) return {state: 'unknown', finalUrl: ''};
+  let sawActivity = false;
+  let lastKnownUrl = '';
   for (let i = 0; i < attempts; i += 1) {
     try {
-      const r = await fetch(withIssueSecret(`/events?limit=80&run_id=${encodeURIComponent(runId)}`));
+      // Reconcile against a wider event window because the browser request may die
+      // while the backend run is still completing post-create clicks.
+      const r = await fetch(withIssueSecret(`/events?limit=300&run_id=${encodeURIComponent(runId)}`));
       const data = await r.json();
       if (r.ok) {
         const items = Array.isArray(data.events) ? data.events : [];
+        if (items.length > 0) {
+          sawActivity = true;
+          lastKnownUrl = extractIssueUrlFromRunEvents(items, runId) || lastKnownUrl;
+        }
         const submitted = items.some((item) => {
           const meta = (item && item.meta) || {};
           return String(item.event || '').trim() === 'issue_submitted'
             && String(meta.run_id || '').trim() === runId;
         });
         if (submitted) {
-          return {state: 'submitted', finalUrl: extractIssueUrlFromRunEvents(items, runId)};
+          return {state: 'submitted', finalUrl: extractIssueUrlFromRunEvents(items, runId) || lastKnownUrl};
         }
         const failed = items.some((item) => {
           const meta = (item && item.meta) || {};
@@ -4454,7 +4462,7 @@ async function reconcileIssueSubmitByRunId(runId, attempts = 30, waitMs = 2000) 
     }
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
-  return {state: 'unknown', finalUrl: ''};
+  return {state: sawActivity ? 'pending' : 'unknown', finalUrl: lastKnownUrl};
 }
 
 async function submitIssueDraft() {
@@ -4572,13 +4580,25 @@ async function submitIssueDraft() {
       document.getElementById('issueSubmitStatus').innerText = `Error submitting draft: ${errText}`;
       setIssueLogToggle(true, true);
       setStatus(`Error submitting issue: ${errText}`);
+    } else if (reconcile.state === 'pending') {
+      appendIssuePlaywrightLog('Backend still shows activity for this run. Keeping it as pending instead of failed.');
+      if (reconcile.finalUrl) {
+        currentIssue.generated_link = reconcile.finalUrl;
+        appendIssuePlaywrightLog(`Last known issue URL: ${reconcile.finalUrl}`);
+      }
+      document.getElementById('issueSubmitStatus').innerText = 'Submit request disconnected, but backend is still processing this run';
+      setIssueLogToggle(true, false);
+      setIssueActiveRunId(expectedRunId);
+      setIssueCurrentRunId(expectedRunId);
+      setStatus('Warning: browser connection failed, but the backend run is still active. Keep the Playwright log open or review recent runs.');
+      renderIssueDraftEditor();
     } else {
       document.getElementById('issueSubmitStatus').innerText = `Error submitting draft: ${errText}`;
       setIssueLogToggle(true, true);
       if (/Create did not navigate to created issue/i.test(errText)) {
         setStatus('Error: issue was not created by Create. Check Playwright log.');
-      } else if (/load failed/i.test(errText)) {
-        setStatus('Warning: request connection failed while processing. Check Playwright log and addon logs.');
+      } else if (/load failed|failed to fetch/i.test(errText)) {
+        setStatus('Warning: request connection failed and no final backend result was confirmed yet. Check Playwright log and recent runs.');
       } else {
         setStatus(`Error submitting issue: ${errText}`);
       }
