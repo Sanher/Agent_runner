@@ -107,6 +107,15 @@ Campos obligatorios para que `issue_agent` pueda generar/rellenar issues:
 - `ISSUE_TARGET_WEB_URL`
 - `ISSUE_OPENAI_API_KEY`
 
+### Agente respuestas (`answers_agent`)
+
+- `ANSWERS_DATA_DIR` (por defecto `/data/answers_agent`; persistencia de conversaciones/estado)
+- `ANSWERS_TELEGRAM_BOT_TOKEN` (legacy: `TELEGRAM_BOT_TOKEN`)
+- `ANSWERS_OPENAI_API_KEY` (legacy: `OPENAI_API_KEY`)
+- `ANSWERS_OPENAI_MODEL` (legacy: `OPENAI_MODEL`, por defecto `gpt-4o-mini`)
+- `ANSWERS_REQUEST_TIMEOUT_SECONDS` (por defecto `30`)
+- `ANSWERS_WEBHOOK_SECRET` (legacy: `TELEGRAM_WEBHOOK_SECRET`; también acepta `telegram_wehbook_secret` en `options.json` por retrocompatibilidad)
+
 Ejemplo mínimo para correo (IMAP):
 
 ```json
@@ -252,3 +261,17 @@ Notas:
 - Config: `/data/email_agent_config.json`
 - Memoria de respuestas: `/data/email_agent_memory.jsonl`
 - Bandeja local de propuestas: `/data/email_agent_suggestions.json`
+
+## Contexto y memoria del agente de respuestas
+
+- Conversaciones: `/data/answers_agent/conversations.json`
+- Estado de revisión: `/data/answers_agent/review_state.json`
+- Archivado: `/data/answers_agent/archived_chats.json`
+- Pendientes: `/data/answers_agent/pending_issues.json`
+- Usuarios bloqueados: `/data/answers_agent/blocked_users.json`
+- Patrones spam: `/data/answers_agent/spam_patterns.json`
+
+Notas:
+
+- Si `ANSWERS_DATA_DIR` apunta fuera de `/data`, el endpoint `GET /health` marcará `data_dir_within_persistent_data_dir=false`.
+- En despliegues dentro de Home Assistant/Supervisor conviene mantener `answers_agent` dentro de `/data` para no perder estado al recrear el contenedor.
