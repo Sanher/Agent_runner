@@ -345,8 +345,26 @@ class WorkdayAgentService:
         except Exception as exc:
             raise RuntimeError("Failed to save workday configuration") from exc
 
+    def _clear_expired_blocked_range(self, settings: Dict[str, str]) -> Dict[str, str]:
+        start = str(settings.get("blocked_start_date", "") or "").strip()
+        end = str(settings.get("blocked_end_date", "") or "").strip()
+        today = date.today().isoformat()
+        if not start or not end or end >= today:
+            return dict(settings)
+        self.logger.info(
+            "Expired blocked range cleared automatically previous_start=%s previous_end=%s today=%s",
+            start,
+            end,
+            today,
+        )
+        return {"blocked_start_date": "", "blocked_end_date": ""}
+
     def get_settings(self) -> Dict[str, str]:
         with self._config_lock:
+            normalized = self._clear_expired_blocked_range(self._settings)
+            if normalized != self._settings:
+                self._persist_settings(normalized)
+                self._settings = dict(normalized)
             return dict(self._settings)
 
     def update_settings(self, blocked_start_date: str, blocked_end_date: str) -> Dict[str, str]:
@@ -360,6 +378,7 @@ class WorkdayAgentService:
             "blocked_start_date": start,
             "blocked_end_date": end,
         }
+        updated = self._clear_expired_blocked_range(updated)
         with self._config_lock:
             self._persist_settings(updated)
             self._settings = dict(updated)

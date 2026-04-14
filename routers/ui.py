@@ -2001,8 +2001,23 @@ def create_ui_router(job_secret: str) -> APIRouter:
 
     #tabWorkday .workday-block-actions {
       display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
       justify-content: flex-end;
       margin-top: 14px;
+    }
+
+    #tabWorkday #workdayClearSettingsBtn {
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text);
+      border: 1px solid var(--input-border);
+      box-shadow: none;
+    }
+
+    #tabWorkday #workdayClearSettingsBtn:hover {
+      background: rgba(255, 255, 255, 0.06);
+      box-shadow: none;
+      filter: none;
     }
 
     #tabWorkday .workday-terminal-card {
@@ -2719,8 +2734,8 @@ def create_ui_router(job_secret: str) -> APIRouter:
           <span class="tab-nav">
             <span class="tab-icon">🌐</span>
             <span class="tab-copy">
-              <span class="tab-title">Web Interaction</span>
-              <span class="tab-subtitle">Scheduler and browser runner</span>
+              <span class="tab-title">Workday Agent</span>
+              <span class="tab-subtitle">Workday scheduler and browser runner</span>
             </span>
             <span id="tabWorkdayBadge" class="nav-badge" data-variant="neutral">Ready</span>
           </span>
@@ -2763,8 +2778,8 @@ def create_ui_router(job_secret: str) -> APIRouter:
       <div class="content-topbar">
         <div class="topbar-copy">
           <p class="topbar-eyebrow">Operations Console</p>
-          <h2 id="activeTabTitle" class="page-title">Web Interaction Agent</h2>
-          <p id="activeTabMeta" class="muted topbar-meta">Scheduler, click history and runtime logs.</p>
+          <h2 id="activeTabTitle" class="page-title">Workday Agent</h2>
+          <p id="activeTabMeta" class="muted topbar-meta">Scheduler, blocked days, click history and runtime logs.</p>
         </div>
         <div class="topbar-actions">
           <button onclick="refreshActivePanel()" id="refreshActivePanelBtn" class="icon-btn ghost-btn" aria-label="Refresh current panel" title="Refresh current panel">↻</button>
@@ -2847,6 +2862,7 @@ def create_ui_router(job_secret: str) -> APIRouter:
           </label>
         </div>
         <div class=\"workday-block-actions\">
+          <button onclick=\"openWorkdayClearModal()\" id=\"workdayClearSettingsBtn\">Clear blocked range</button>
           <button onclick=\"saveWorkdaySettings()\" id=\"workdaySaveSettingsBtn\">Save blocked dates</button>
         </div>
       </div>
@@ -3177,6 +3193,15 @@ def create_ui_router(job_secret: str) -> APIRouter:
     </div>
   </div>
 
+  <div id=\"workdayClearModal\" class=\"modal-backdrop hidden\">
+    <div class=\"modal-card\">
+      <h3>Clear blocked range</h3>
+      <p class=\"muted\">This will remove the currently configured blocked date range immediately. Use it only if you want Workday to stop treating those dates as blocked from now on.</p>
+      <button onclick=\"clearWorkdaySettings()\" id=\"workdayConfirmClearSettingsBtn\">Clear blocked range</button>
+      <button onclick=\"closeWorkdayClearModal()\" id=\"workdayCancelClearSettingsBtn\">Cancel</button>
+    </div>
+  </div>
+
 <script>
 // Base paths to work the same locally and behind a proxy.
 const currentPath = window.location.pathname.endsWith('/')
@@ -3324,8 +3349,8 @@ function buildReplySubject(subject) {
 
 const TAB_META = {
   workday: {
-    title: 'Web Interaction Agent',
-    subtitle: 'Scheduler, click history and runtime logs.'
+    title: 'Workday Agent',
+    subtitle: 'Scheduler, blocked days, click history and runtime logs.'
   },
   email: {
     title: 'Email Agent',
@@ -3484,6 +3509,15 @@ async function refreshWorkdayPanel() {
   await Promise.all([loadWorkdayStatus(), loadWorkdayHistory(), loadWorkdayEvents()]);
 }
 
+function syncWorkdayBlockedSettingsUi(start, end) {
+  const cleanStart = String(start || '');
+  const cleanEnd = String(end || '');
+  document.getElementById('workdayBlockedStartDate').value = cleanStart;
+  document.getElementById('workdayBlockedEndDate').value = cleanEnd;
+  const clearBtn = document.getElementById('workdayClearSettingsBtn');
+  if (clearBtn) clearBtn.disabled = !(cleanStart && cleanEnd);
+}
+
 async function loadWorkdaySettings() {
   try {
     const r = await fetch(withWorkdaySecret('/settings'));
@@ -3492,14 +3526,23 @@ async function loadWorkdaySettings() {
     const settings = (data && data.settings) ? data.settings : {};
     const start = String(settings.blocked_start_date || '');
     const end = String(settings.blocked_end_date || '');
-    document.getElementById('workdayBlockedStartDate').value = start;
-    document.getElementById('workdayBlockedEndDate').value = end;
+    syncWorkdayBlockedSettingsUi(start, end);
     document.getElementById('workdaySettingsStatus').innerText = (start && end)
       ? `Active block: ${start} - ${end}`
       : 'No blocked range configured.';
   } catch (err) {
     document.getElementById('workdaySettingsStatus').innerText = `Error loading workday settings: ${err}`;
   }
+}
+
+function openWorkdayClearModal() {
+  const btn = document.getElementById('workdayClearSettingsBtn');
+  if (btn && btn.disabled) return;
+  document.getElementById('workdayClearModal').classList.remove('hidden');
+}
+
+function closeWorkdayClearModal() {
+  document.getElementById('workdayClearModal').classList.add('hidden');
 }
 
 async function saveWorkdaySettings() {
@@ -3534,8 +3577,7 @@ async function saveWorkdaySettings() {
     const updated = (data && data.settings) ? data.settings : {};
     const updatedStart = String(updated.blocked_start_date || '');
     const updatedEnd = String(updated.blocked_end_date || '');
-    document.getElementById('workdayBlockedStartDate').value = updatedStart;
-    document.getElementById('workdayBlockedEndDate').value = updatedEnd;
+    syncWorkdayBlockedSettingsUi(updatedStart, updatedEnd);
     statusBox.innerText = (updatedStart && updatedEnd)
       ? `Block saved: ${updatedStart} - ${updatedEnd}`
       : 'Blocked range removed.';
@@ -3545,6 +3587,45 @@ async function saveWorkdaySettings() {
   } finally {
     btn.disabled = false;
     btn.innerText = oldText;
+  }
+}
+
+async function clearWorkdaySettings() {
+  const btn = document.getElementById('workdayClearSettingsBtn');
+  const confirmBtn = document.getElementById('workdayConfirmClearSettingsBtn');
+  const cancelBtn = document.getElementById('workdayCancelClearSettingsBtn');
+  const oldText = btn.innerText;
+  const oldConfirmText = confirmBtn.innerText;
+  const statusBox = document.getElementById('workdaySettingsStatus');
+
+  btn.disabled = true;
+  btn.innerText = 'Clearing...';
+  confirmBtn.disabled = true;
+  confirmBtn.innerText = 'Clearing...';
+  cancelBtn.disabled = true;
+  try {
+    const r = await fetch(withWorkdaySecret('/settings'), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        blocked_start_date: '',
+        blocked_end_date: ''
+      })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    syncWorkdayBlockedSettingsUi('', '');
+    statusBox.innerText = 'Blocked range removed.';
+    closeWorkdayClearModal();
+    await loadWorkdayStatus();
+  } catch (err) {
+    statusBox.innerText = `Error clearing workday settings: ${err}`;
+  } finally {
+    btn.disabled = false;
+    btn.innerText = oldText;
+    confirmBtn.disabled = false;
+    confirmBtn.innerText = oldConfirmText;
+    cancelBtn.disabled = false;
   }
 }
 
@@ -4879,6 +4960,7 @@ function toggleTheme() {
   const suggestionModal = document.getElementById('suggestionModal');
   const manualModal = document.getElementById('manualModal');
   const answersSuggestModal = document.getElementById('answersSuggestModal');
+  const workdayClearModal = document.getElementById('workdayClearModal');
   suggestionModal.addEventListener('click', function(event) {
     if (event.target === suggestionModal) closeSuggestionModal();
   });
@@ -4888,11 +4970,15 @@ function toggleTheme() {
   answersSuggestModal.addEventListener('click', function(event) {
     if (event.target === answersSuggestModal) closeAnswersSuggestModal();
   });
+  workdayClearModal.addEventListener('click', function(event) {
+    if (event.target === workdayClearModal) closeWorkdayClearModal();
+  });
   document.addEventListener('keydown', function(event) {
     if (event.key !== 'Escape') return;
     closeSuggestionModal();
     closeManualModal();
     closeAnswersSuggestModal();
+    closeWorkdayClearModal();
   });
 })();
 
