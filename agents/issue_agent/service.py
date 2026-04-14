@@ -1190,7 +1190,21 @@ class IssueAgentService:
     ) -> Dict[str, Any]:
         self._maybe_weekly_cleanup()
         if not self._run_lock.acquire(blocking=False):
-            raise RuntimeError("Issue flow already running")
+            active_run_id = str(self._active_run_id or "").strip()
+            self.logger.warning(
+                "Issue flow submit requested while another run is active (active_run_id=%s)",
+                active_run_id or "unknown",
+            )
+            # The UI can occasionally fire a second submit while the first run is
+            # already finishing. Give the lock a short grace window before failing.
+            if not self._run_lock.acquire(timeout=4):
+                raise RuntimeError(
+                    f"Issue flow already running (active_run_id={active_run_id or 'unknown'})"
+                )
+            self.logger.info(
+                "Issue flow: acquired run lock after short retry window (previous_active_run_id=%s)",
+                active_run_id or "unknown",
+            )
 
         run_id_raw = str(issue.get("issue_id", "")).strip() or f"issue-{self.now_id()}"
         run_id = re.sub(r"[^a-zA-Z0-9._-]+", "-", run_id_raw).strip("-") or f"issue-{self.now_id()}"
@@ -1467,6 +1481,46 @@ class IssueAgentService:
             raise last_error
         raise RuntimeError(f"Option not found: {text}")
 
+    def _click_single_visible_option(self, page, timeout_ms: int = 6000) -> bool:
+        selectors = [
+            "li[role='option']",
+            "li[role='menuitem']",
+            "button[role='option']",
+        ]
+        visible_candidates = []
+        seen_keys = set()
+
+        for selector in selectors:
+            locator = page.locator(selector)
+            try:
+                total = min(locator.count(), 12)
+            except Exception:
+                total = 0
+            for idx in range(total):
+                option = locator.nth(idx)
+                try:
+                    if not option.is_visible():
+                        continue
+                    text = str(option.inner_text() or "").strip()
+                    if not text:
+                        continue
+                    key = (selector, text.lower())
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    visible_candidates.append(option)
+                except Exception:
+                    continue
+
+        if len(visible_candidates) != 1:
+            return False
+
+        try:
+            visible_candidates[0].click(timeout=timeout_ms)
+        except Exception:
+            visible_candidates[0].click(timeout=timeout_ms, force=True)
+        return True
+
     @staticmethod
     def _dismiss_open_overlays(page) -> None:
         # Primer portal overlays can stay open and intercept pointer events in following clicks.
@@ -1630,7 +1684,7 @@ class IssueAgentService:
             add_parent_item.wait_for(state="visible", timeout=7000)
             add_parent_item.click(timeout=7000)
             page.locator('[data-testid="back-to-repo-selection-button"]').first.click(timeout=7000)
-            page.wait_for_timeout(400)
+            page.wait_for_timeout(1200)
 
             repo_search_term, selection_targets = self._parent_repo_search_strategy(parent_repo)
             repo_search = page.locator(
@@ -1642,42 +1696,69 @@ class IssueAgentService:
                     repo_search.click(timeout=3000)
                 except Exception:
                     pass
+                page.wait_for_timeout(250)
                 try:
                     repo_search.fill("", timeout=3000)
                 except Exception:
                     pass
                 repo_search.fill(repo_search_term, timeout=7000)
-                page.wait_for_timeout(1200)
+                page.wait_for_timeout(2200)
 
             selection_error: Optional[Exception] = None
             selected_parent_repo = False
             for selection_target in selection_targets:
-                try:
-                    self._click_option_by_text(
-                        page,
-                        selection_target,
-                        always_click=True,
-                        timeout_ms=7000,
-                    )
-                    selected_parent_repo = True
+                for attempt in range(2):
+                    try:
+                        self._click_option_by_text(
+                            page,
+                            selection_target,
+                            always_click=True,
+                            timeout_ms=9000,
+                        )
+                        selected_parent_repo = True
+                        break
+                    except Exception as err:
+                        selection_error = err
+                        if attempt == 0 and repo_search.count() > 0:
+                            try:
+                                repo_search.fill("", timeout=3000)
+                            except Exception:
+                                pass
+                            repo_search.fill(repo_search_term, timeout=7000)
+                            page.wait_for_timeout(2200)
+                        continue
+                if selected_parent_repo:
                     break
+
+            if not selected_parent_repo and repo_search.count() > 0:
+                try:
+                    selected_parent_repo = self._click_single_visible_option(
+                        page,
+                        timeout_ms=9000,
+                    )
                 except Exception as err:
                     selection_error = err
-                    continue
 
             if not selected_parent_repo:
                 if selection_error is not None:
                     raise selection_error
                 raise RuntimeError(f"Unable to select parent repository: {parent_repo}")
 
-            page.wait_for_timeout(2500)
+            page.wait_for_timeout(3500)
             issue_search = page.locator('input[aria-label="Search issues"], input[placeholder*="Search issues"]').first
-            issue_search.wait_for(state="visible", timeout=12000)
-            issue_search.fill(parent_issue_number, timeout=7000)
-            page.wait_for_timeout(5000)
-            parent_issue = page.locator("li[role='option']").filter(has_text=f"#{parent_issue_number}").first
-            parent_issue.wait_for(state="visible", timeout=7000)
-            parent_issue.click(timeout=7000)
+            issue_search.wait_for(state="visible", timeout=15000)
+            try:
+                issue_search.click(timeout=3000)
+            except Exception:
+                pass
+            issue_search.fill(parent_issue_number, timeout=9000)
+            page.wait_for_timeout(5500)
+            self._click_option_by_text(
+                page,
+                f"#{parent_issue_number}",
+                always_click=True,
+                timeout_ms=9000,
+            )
             self._debug("Parent relationship selected", parent_issue=parent_issue_number)
             return None
         except Exception as err:
