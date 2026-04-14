@@ -320,7 +320,7 @@ def health() -> Dict[str, Any]:
 
 @APP.get("/answers_agent/guidelines")
 def get_guidelines() -> Dict[str, str]:
-    files = ["behavior.md", "escalation.md", "spam_policy.md"]
+    files = ["behavior.md", "escalation.md"]
     result: Dict[str, str] = {}
     for f in files:
         path = GUIDELINES_DIR / f

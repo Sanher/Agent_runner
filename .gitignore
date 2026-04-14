@@ -9,3 +9,5 @@ no_headless/*.json
 no_headless/.env
 .env
 progress.md
+.claude
+answers_agent/data/spam_patterns.json
