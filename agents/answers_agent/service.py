@@ -115,8 +115,24 @@ class AnswersAgentService:
             message.get("display_name"),
             message.get("user_name"),
             message.get("username"),
+            message.get("from_name"),
+            message.get("sender_name"),
+            message.get("author"),
+            message.get("actor"),
+            message.get("from"),
         ]
         for candidate in candidates:
+            if isinstance(candidate, dict):
+                first_name = str(candidate.get("first_name") or "").strip()
+                last_name = str(candidate.get("last_name") or "").strip()
+                full_name = f"{first_name} {last_name}".strip()
+                if full_name:
+                    return full_name
+                for key in ("name", "display_name", "user_name", "username"):
+                    nested_value = str(candidate.get(key) or "").strip()
+                    if nested_value:
+                        return f"@{nested_value}" if key == "username" and not nested_value.startswith("@") else nested_value
+                continue
             value = str(candidate or "").strip()
             if value:
                 return value
@@ -538,6 +554,144 @@ class AnswersAgentService:
         except Exception:
             return default
 
+    @staticmethod
+    def _normalize_speaker_name(value: Any) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip().casefold())
+
+    @classmethod
+    def _local_speaker_names_from_payload(cls, payload: Dict[str, Any]) -> List[str]:
+        if not isinstance(payload, dict):
+            return []
+        raw_values: List[Any] = []
+        for key in (
+            "local_speaker_names",
+            "local_speakers",
+            "local_participant_names",
+            "local_participants",
+        ):
+            value = payload.get(key)
+            if isinstance(value, list):
+                raw_values.extend(value)
+            elif value is not None:
+                raw_values.extend(str(value).split(","))
+        for key in ("local_speaker_name", "local_speaker", "local_participant_name"):
+            value = payload.get(key)
+            if value is not None:
+                raw_values.append(value)
+
+        names: List[str] = []
+        for raw in raw_values:
+            normalized = cls._normalize_speaker_name(raw)
+            if normalized and normalized not in names:
+                names.append(normalized)
+        return names
+
+    @staticmethod
+    def _parse_bool_flag(value: Any) -> Optional[bool]:
+        if isinstance(value, bool):
+            return value
+        text = str(value or "").strip().casefold()
+        if text in {"1", "true", "yes", "y", "on"}:
+            return True
+        if text in {"0", "false", "no", "n", "off"}:
+            return False
+        return None
+
+    @classmethod
+    def _explicit_local_speaker_flag(cls, message: Dict[str, Any]) -> Optional[bool]:
+        for key in ("is_local", "local", "from_me", "outgoing", "is_outgoing"):
+            if key in message:
+                parsed = cls._parse_bool_flag(message.get(key))
+                if parsed is not None:
+                    return parsed
+
+        for key in ("speaker_side", "side", "direction", "sender_type"):
+            value = str(message.get(key) or "").strip().casefold()
+            if value in {"local", "outgoing", "self", "me", "assistant", "agent", "bot"}:
+                return True
+            if value in {"remote", "incoming", "user", "customer", "external"}:
+                return False
+        return None
+
+    @classmethod
+    def _is_local_speaker(
+        cls,
+        message: Dict[str, Any],
+        *,
+        role: str,
+        local_speaker_names: List[str],
+    ) -> bool:
+        explicit = cls._explicit_local_speaker_flag(message)
+        if explicit is not None:
+            return explicit
+
+        display_name = cls._display_name_from_message(message)
+        normalized_name = cls._normalize_speaker_name(display_name)
+        if normalized_name and normalized_name in local_speaker_names:
+            return True
+
+        return role in {"assistant", "agent", "bot", "local"}
+
+    @staticmethod
+    def _merge_speaker_names(*groups: List[str]) -> List[str]:
+        merged: List[str] = []
+        for group in groups:
+            for name in group:
+                if name and name not in merged:
+                    merged.append(name)
+        return merged
+
+    @classmethod
+    def _infer_common_local_speaker_names(cls, users: Dict[str, Any]) -> List[str]:
+        chats_by_name: Dict[str, List[str]] = {}
+        for user_id, user_entry in users.items():
+            if not isinstance(user_entry, dict):
+                continue
+            fallback_name = cls._default_display_name(user_entry, str(user_id))
+            fallback_name_key = cls._normalize_speaker_name(fallback_name)
+            messages = user_entry.get("messages", [])
+            if not isinstance(messages, list):
+                continue
+            for message in messages:
+                if not isinstance(message, dict):
+                    continue
+                role = str(message.get("role", "")).strip().lower()
+                if role in {"assistant", "agent", "bot", "local"}:
+                    continue
+                name_key = cls._normalize_speaker_name(cls._display_name_from_message(message))
+                if not name_key or name_key == fallback_name_key:
+                    continue
+                chat_id = message.get("chat_id")
+                if chat_id is None:
+                    continue
+                chat_key = str(chat_id)
+                chats = chats_by_name.setdefault(name_key, [])
+                if chat_key not in chats:
+                    chats.append(chat_key)
+
+        return [name for name, chats in chats_by_name.items() if len(chats) > 1]
+
+    @classmethod
+    def _message_timestamp(cls, message: Dict[str, Any]) -> int:
+        for key in ("timestamp", "date_unixtime", "date_ts", "created_ts"):
+            value = message.get(key)
+            if value is not None:
+                timestamp = cls._as_int(value, -1)
+                if timestamp >= 0:
+                    return timestamp
+
+        for key in ("date", "created_at", "datetime"):
+            value = str(message.get(key) or "").strip()
+            if not value:
+                continue
+            if value.isdigit():
+                return cls._as_int(value, 0)
+            try:
+                return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
+            except Exception:
+                continue
+        return 0
+
     def _prune_archived_items(self, items: List[Dict[str, Any]], now_ts: int) -> List[Dict[str, Any]]:
         # Keep only snapshots newer than the retention threshold.
         threshold = max(0, int(now_ts) - self.ARCHIVE_RETENTION_SECONDS)
@@ -732,6 +886,7 @@ class AnswersAgentService:
             "received_count": self._as_int(chat.get("received_count"), 0),
             "last_received_ts": self._as_int(chat.get("last_received_ts"), 0),
             "received_messages": list(chat.get("received_messages") or [])[-50:],
+            "conversation_messages": list(chat.get("conversation_messages") or [])[-80:],
             "suggested_reply": str(chat.get("suggested_reply") or ""),
             "updated_at": str(chat.get("updated_at") or ""),
             "archived_reason": str(archived_reason or "reviewed"),
@@ -902,6 +1057,11 @@ class AnswersAgentService:
             users = {}
 
         grouped: Dict[str, Dict[str, Any]] = {}
+        global_local_speaker_names = self._merge_speaker_names(
+            self._local_speaker_names_from_payload(conversations),
+            self._infer_common_local_speaker_names(users),
+        )
+        message_sequence = 0
         for user_id, user_entry in users.items():
             if not isinstance(user_entry, dict):
                 continue
@@ -909,6 +1069,10 @@ class AnswersAgentService:
             if not isinstance(messages, list):
                 continue
             fallback_name = self._default_display_name(user_entry, str(user_id))
+            user_local_speaker_names = self._merge_speaker_names(
+                global_local_speaker_names,
+                self._local_speaker_names_from_payload(user_entry),
+            )
             for message in messages:
                 if not isinstance(message, dict):
                     continue
@@ -921,7 +1085,7 @@ class AnswersAgentService:
                 chat_key = str(numeric_chat_id)
                 role = str(message.get("role", "")).strip().lower()
                 content = str(message.get("content", "")).strip()
-                timestamp = int(message.get("timestamp") or 0)
+                timestamp = self._message_timestamp(message)
                 grouped_chat = grouped.setdefault(
                     chat_key,
                     {
@@ -929,22 +1093,51 @@ class AnswersAgentService:
                         "user_id": str(user_id),
                         "name": fallback_name,
                         "received_messages": [],
+                        "conversation_messages": [],
                         "context_messages": [],
                         "last_received_ts": 0,
                         "last_assistant_reply": "",
                     },
                 )
+                local_speaker_names = self._merge_speaker_names(
+                    user_local_speaker_names,
+                    self._local_speaker_names_from_payload(grouped_chat),
+                    self._local_speaker_names_from_payload(message),
+                )
 
-                if role in {"user", "assistant"} and content:
+                message_is_local = False
+                if role in {"user", "assistant", "agent", "bot", "local"} and content:
+                    message_is_local = self._is_local_speaker(
+                        message,
+                        role=role,
+                        local_speaker_names=local_speaker_names,
+                    )
+                    context_role = "assistant" if message_is_local else "user"
                     grouped_chat["context_messages"].append(
                         {
-                            "role": role,
+                            "role": context_role,
                             "content": content,
                             "timestamp": timestamp,
                         }
                     )
+                    name = self._display_name_from_message(message)
+                    if not name:
+                        name = "Agent" if message_is_local else grouped_chat["name"] or fallback_name
+                    grouped_chat["conversation_messages"].append(
+                        {
+                            "role": role,
+                            "content": content,
+                            "timestamp": timestamp,
+                            "chat_id": numeric_chat_id,
+                            "user_id": str(user_id),
+                            "name": name,
+                            "speaker_side": "local" if message_is_local else "remote",
+                            "_sequence": message_sequence,
+                        }
+                    )
+                    message_sequence += 1
 
-                if role == "user":
+                if role == "user" and not message_is_local:
                     name = self._display_name_from_message(message) or grouped_chat["name"] or fallback_name
                     grouped_chat["name"] = name
                     grouped_chat["received_messages"].append(
@@ -969,6 +1162,12 @@ class AnswersAgentService:
         for chat_key, chat in grouped.items():
             received = sorted(chat["received_messages"], key=lambda item: int(item.get("timestamp") or 0))
             context = sorted(chat["context_messages"], key=lambda item: int(item.get("timestamp") or 0))
+            conversation = sorted(
+                chat["conversation_messages"],
+                key=lambda item: (int(item.get("timestamp") or 0), int(item.get("_sequence") or 0)),
+            )
+            for item in conversation:
+                item.pop("_sequence", None)
             state = review_chats.get(chat_key, {})
             if not isinstance(state, dict):
                 state = {}
@@ -1002,6 +1201,7 @@ class AnswersAgentService:
                     "last_received_ts": int(chat.get("last_received_ts") or 0),
                     "received_count": len(received),
                     "received_messages": received[-50:],
+                    "conversation_messages": conversation[-80:],
                     "suggested_reply": suggested_reply,
                     "context_messages": context[-16:],
                 }

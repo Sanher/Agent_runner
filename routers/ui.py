@@ -2407,18 +2407,24 @@ def create_ui_router(job_secret: str) -> APIRouter:
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
     }
 
-    #tabAnswers .answers-bubble-user {
+    #tabAnswers .answers-bubble-user,
+    #tabAnswers .answers-bubble-remote {
       align-self: flex-start;
       background: linear-gradient(180deg, rgba(42, 45, 56, 0.92), rgba(22, 24, 31, 0.92));
       border-color: rgba(148, 163, 184, 0.12);
       color: #f5f2ec;
     }
 
-    #tabAnswers .answers-bubble-agent {
+    #tabAnswers .answers-bubble-agent,
+    #tabAnswers .answers-bubble-local {
       align-self: flex-end;
       background: linear-gradient(180deg, rgba(249, 115, 22, 0.24), rgba(194, 65, 12, 0.16));
       border-color: rgba(249, 115, 22, 0.24);
       color: #fff7ed;
+    }
+
+    #tabAnswers .answers-bubble-local .answers-bubble-meta {
+      text-align: right;
     }
 
     #tabAnswers .answers-bubble-meta {
@@ -2520,6 +2526,14 @@ def create_ui_router(job_secret: str) -> APIRouter:
       max-height: 240px;
       overflow: auto;
       margin-bottom: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .answers-messages .answers-bubble {
+      max-width: min(620px, 92%);
+      padding: 12px 14px;
     }
 
     .answers-msg {
@@ -5020,6 +5034,56 @@ function answersReplyAreaId(chatId) {
   return `answers-reply-${safeDomId(chatId)}`;
 }
 
+function parseAnswersBoolFlag(value) {
+  if (typeof value === 'boolean') return value;
+  const text = String(value ?? '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'y', 'on'].includes(text)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(text)) return false;
+  return null;
+}
+
+function isLocalAnswersMessage(message) {
+  const side = String(message?.speaker_side || message?.speaker || message?.side || '').trim().toLowerCase();
+  if (['local', 'outgoing', 'self', 'me', 'assistant', 'agent', 'bot'].includes(side)) return true;
+  if (['remote', 'incoming', 'user', 'customer', 'external'].includes(side)) return false;
+
+  for (const key of ['is_local', 'local', 'from_me', 'outgoing', 'is_outgoing']) {
+    if (Object.prototype.hasOwnProperty.call(message || {}, key)) {
+      const parsed = parseAnswersBoolFlag(message[key]);
+      if (parsed !== null) return parsed;
+    }
+  }
+
+  const role = String(message?.role || '').trim().toLowerCase();
+  return ['assistant', 'agent', 'bot', 'local'].includes(role);
+}
+
+function answersConversationMessages(item) {
+  const timeline = Array.isArray(item.conversation_messages) ? item.conversation_messages : [];
+  if (timeline.length) return timeline;
+  const messages = Array.isArray(item.received_messages) ? item.received_messages : [];
+  return messages.map((message) => ({
+    ...message,
+    role: message.role || 'user',
+    speaker_side: message.speaker_side || 'remote',
+  }));
+}
+
+function renderAnswersBubble(message, fallbackName) {
+  const isLocal = isLocalAnswersMessage(message);
+  const ts = formatTs(message?.timestamp);
+  const content = String(message?.content || '').trim();
+  const fallbackAuthor = isLocal ? 'Agent' : fallbackName;
+  const name = String(message?.name || message?.author || fallbackAuthor || '').trim();
+  const sideClass = isLocal ? 'answers-bubble-local' : 'answers-bubble-remote';
+  return `
+    <div class="answers-bubble ${sideClass}" data-speaker-side="${isLocal ? 'local' : 'remote'}">
+      <p class="answers-bubble-meta">${escapeHtml(name)} · ${escapeHtml(ts)}</p>
+      <p class="answers-bubble-text">${escapeHtml(content)}</p>
+    </div>
+  `;
+}
+
 function openAnswersSuggestModal(chatId) {
   currentAnswersChatId = String(chatId || '');
   const modal = document.getElementById('answersSuggestModal');
@@ -5167,20 +5231,10 @@ async function loadArchivedAnswersChats() {
   for (const item of data.items) {
     const chatId = String(item.chat_id || '');
     const archiveId = String(item.archive_id || '');
-    const messages = Array.isArray(item.received_messages) ? item.received_messages : [];
+    const messages = answersConversationMessages(item);
     const renderedMessages = messages.length
-      ? messages.map((message) => {
-          const ts = formatTs(message.timestamp);
-          const content = String(message.content || '').trim();
-          const name = String(message.name || item.name || '').trim();
-          return `
-            <div class="answers-msg">
-              <div class="muted">${escapeHtml(ts)} | Chat ${escapeHtml(chatId)} | ${escapeHtml(name)}</div>
-              <div>${escapeHtml(content)}</div>
-            </div>
-          `;
-        }).join('')
-      : `<div class="muted">No user messages in this archived conversation.</div>`;
+      ? messages.map((message) => renderAnswersBubble(message, item.name || '')).join('')
+      : `<div class="muted">No messages in this archived conversation.</div>`;
 
     const card = document.createElement('div');
     card.className = 'card';
@@ -5256,23 +5310,15 @@ async function loadAnswersChats() {
     const chatId = String(item.chat_id || '');
     const toggleId = `answers-chat-toggle-${safeDomId(chatId)}`;
     const safeReplyId = answersReplyAreaId(chatId);
-    const messages = Array.isArray(item.received_messages) ? item.received_messages : [];
+    const messages = answersConversationMessages(item);
+    const receivedMessages = Array.isArray(item.received_messages) ? item.received_messages : [];
+    const previewSource = receivedMessages.length ? receivedMessages : messages;
     const lastMessage = messages.length
-      ? String(messages[messages.length - 1].content || '').trim()
+      ? String(previewSource[previewSource.length - 1].content || '').trim()
       : 'No user messages in this chat.';
     const renderedMessages = messages.length
-      ? messages.map((message) => {
-          const ts = formatTs(message.timestamp);
-          const content = String(message.content || '').trim();
-          const name = String(message.name || item.name || '').trim();
-          return `
-            <div class="answers-bubble answers-bubble-user">
-              <p class="answers-bubble-meta">${escapeHtml(name)} · ${escapeHtml(ts)}</p>
-              <p class="answers-bubble-text">${escapeHtml(content)}</p>
-            </div>
-          `;
-        }).join('')
-      : `<div class="answers-empty-state"><p class="muted">No user messages in this chat.</p></div>`;
+      ? messages.map((message) => renderAnswersBubble(message, item.name || '')).join('')
+      : `<div class="answers-empty-state"><p class="muted">No messages in this chat.</p></div>`;
     const status = String(item.status || 'pending').toLowerCase();
     const suggestionText = String(item.suggested_reply || '').trim();
 
@@ -5308,12 +5354,6 @@ async function loadAnswersChats() {
         <div class="answers-detail-body">
           <div class="answers-thread">
             ${renderedMessages}
-            ${suggestionText ? `
-              <div class="answers-bubble answers-bubble-agent">
-                <p class="answers-bubble-meta">Suggested reply</p>
-                <p class="answers-bubble-text">${escapeHtml(suggestionText)}</p>
-              </div>
-            ` : ''}
           </div>
           <div class="answers-suggestion-card">
             <div class="answers-suggestion-head">

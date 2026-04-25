@@ -51,6 +51,108 @@ class AnswersArchivingTests(unittest.TestCase):
         self.assertEqual(archived[0]["archived_reason"], "reviewed")
         self.assertGreater(int(archived[0]["archived_at"]), 0)
 
+    def test_grouped_chat_exposes_chronological_conversation_messages(self) -> None:
+        self.service._save_json(
+            self.service.conversations_path,
+            {
+                "local_speaker_names": ["Support Agent"],
+                "users": {
+                    "2002": {
+                        "display_name": "Customer",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "Need support",
+                                "chat_id": 1001,
+                                "timestamp": 100,
+                                "name": "Customer",
+                            },
+                            {
+                                "role": "user",
+                                "content": "I will check that now.",
+                                "chat_id": 1001,
+                                "timestamp": 101,
+                                "name": "Support Agent",
+                            },
+                            {
+                                "role": "assistant",
+                                "content": "The update is ready.",
+                                "chat_id": 1001,
+                                "timestamp": 102,
+                            },
+                        ],
+                    }
+                },
+            },
+        )
+
+        chats = self.service.list_chats_grouped()
+        self.assertEqual(len(chats), 1)
+        timeline = chats[0]["conversation_messages"]
+        self.assertEqual([item["content"] for item in timeline], [
+            "Need support",
+            "I will check that now.",
+            "The update is ready.",
+        ])
+        self.assertEqual([item["speaker_side"] for item in timeline], ["remote", "local", "local"])
+        self.assertEqual([item["name"] for item in timeline], ["Customer", "Support Agent", "Agent"])
+
+    def test_grouped_chat_infers_common_local_speaker_across_chats(self) -> None:
+        self.service._save_json(
+            self.service.conversations_path,
+            {
+                "users": {
+                    "2002": {
+                        "display_name": "Customer One",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "First question",
+                                "chat_id": 1001,
+                                "timestamp": 100,
+                                "name": "Customer One",
+                            },
+                            {
+                                "role": "user",
+                                "content": "First answer",
+                                "chat_id": 1001,
+                                "timestamp": 101,
+                                "name": "Shared Operator",
+                            },
+                        ],
+                    },
+                    "3003": {
+                        "display_name": "Customer Two",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "Second question",
+                                "chat_id": 2002,
+                                "timestamp": 200,
+                                "name": "Customer Two",
+                            },
+                            {
+                                "role": "user",
+                                "content": "Second answer",
+                                "chat_id": 2002,
+                                "timestamp": 201,
+                                "name": "Shared Operator",
+                            },
+                        ],
+                    },
+                },
+            },
+        )
+
+        chats = self.service.list_chats_grouped()
+        local_messages = [
+            message
+            for chat in chats
+            for message in chat["conversation_messages"]
+            if message["name"] == "Shared Operator"
+        ]
+        self.assertEqual([item["speaker_side"] for item in local_messages], ["local", "local"])
+
     def test_archived_list_prunes_entries_older_than_a_week(self) -> None:
         now_ts = self.service._now_ts()
         stale_ts = now_ts - self.service.ARCHIVE_RETENTION_SECONDS - 30
