@@ -123,6 +123,27 @@
 - Suggest a new worktree when the change is likely to touch different ownership areas and would benefit from a separate branch/history.
 - Do not suggest a new worktree for every small bug or tiny follow-up inside an already active agent workspace.
 
+### Subida A Main Desde Worktrees
+
+- Cuando el trabajo se haga en un worktree/rama específica de agente, no es obligatorio abrir PR si el remoto permite push directo a `main`.
+- Flujo preferido para subir sin PR:
+  1. Terminar cambios en el worktree del agente.
+  2. Ejecutar tests relevantes.
+  3. Ejecutar `Non-Generic Name Guard`.
+  4. Ejecutar `Change Quality Gate`.
+  5. Crear commit convencional en la rama del worktree.
+  6. Ir al worktree principal/canónico que tenga `main`.
+  7. Actualizar `main` con `git fetch origin --tags` y `git pull --ff-only origin main`.
+  8. Integrar la rama del worktree con `git merge --ff-only <rama-del-worktree>`.
+  9. Ejecutar de nuevo `Non-Generic Name Guard` antes del push.
+  10. Hacer `git push origin main`.
+  11. Crear y subir tag de versión si aplica, por ejemplo:
+      `git tag -a vX.Y.Z -m "chore(version): bump to version X.Y.Z"`
+      `git push origin vX.Y.Z`
+- Si `git merge --ff-only` falla, no forzar el merge automáticamente; revisar divergencia y pedir confirmación.
+- Si `git push origin main` falla por protección de rama, usar PR.
+- Para repositorios child de add-ons Home Assistant, antes de cualquier push verificar que existe `.github/workflows/notify-parent-add-on-repo.yml`.
+
 ### Global Workspace Behavior
 
 - The `global` workspace is the default coordinator.
