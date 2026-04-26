@@ -377,6 +377,24 @@ class EmailAgentService:
         charset = msg.get_content_charset() or "utf-8"
         return payload.decode(charset, errors="replace").strip()
 
+    @staticmethod
+    def _forwarded_header_preview(body: str, max_lines: int = 4) -> str:
+        raw_lines = [line.strip() for line in str(body or "").splitlines()]
+        start_index = 0
+        for index, line in enumerate(raw_lines):
+            if re.search(r"forwarded message|mensaje reenviado", line, flags=re.IGNORECASE):
+                start_index = index + 1
+                break
+
+        lines: List[str] = []
+        for line in raw_lines[start_index:]:
+            if not line:
+                continue
+            lines.append(line)
+            if len(lines) >= max_lines:
+                break
+        return "\n".join(lines)
+
     def load_config(self) -> Dict[str, Any]:
         default_config = {
             "global_context": "",
@@ -633,6 +651,8 @@ class EmailAgentService:
     def _notify_new_suggestion(self, suggestion: Dict[str, Any]) -> None:
         if not self.webhook_notify_url:
             return
+        forwarded_preview = self._forwarded_header_preview(suggestion.get("original_body", ""))
+        suggested_reply = str(suggestion.get("suggested_reply") or "").strip()
         try:
             httpx.post(
                 self.webhook_notify_url,
@@ -642,6 +662,8 @@ class EmailAgentService:
                     "email_id": suggestion["email_id"],
                     "subject": suggestion["subject"],
                     "from": suggestion["from"],
+                    "forwarded_preview": forwarded_preview,
+                    "suggested_reply": suggested_reply[:1800],
                     "ts": datetime.now().isoformat(),
                 },
                 timeout=15,
