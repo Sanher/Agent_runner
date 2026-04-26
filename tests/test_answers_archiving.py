@@ -95,7 +95,52 @@ class AnswersArchivingTests(unittest.TestCase):
             "The update is ready.",
         ])
         self.assertEqual([item["speaker_side"] for item in timeline], ["remote", "local", "local"])
+        self.assertEqual([item["speaker_type"] for item in timeline], ["remote", "operator", "agent"])
         self.assertEqual([item["name"] for item in timeline], ["Customer", "Support Agent", "Agent"])
+
+    def test_grouped_chat_marks_local_operator_by_telegram_id(self) -> None:
+        self.service._save_json(
+            self.service.conversations_path,
+            {
+                "users": {
+                    "2002": {
+                        "display_name": "Customer",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "External question",
+                                "chat_id": 1001,
+                                "timestamp": 100,
+                                "name": "Customer",
+                                "from_id": "user2002",
+                            },
+                            {
+                                "role": "user",
+                                "content": "Local operator answer",
+                                "chat_id": 1001,
+                                "timestamp": 101,
+                                "name": "Local Operator",
+                                "from_id": "user435649084",
+                            },
+                            {
+                                "role": "assistant",
+                                "content": "Agent follow-up",
+                                "chat_id": 1001,
+                                "timestamp": 102,
+                            },
+                        ],
+                    }
+                },
+            },
+        )
+
+        chats = self.service.list_chats_grouped()
+        self.assertEqual(len(chats), 1)
+        self.assertEqual(chats[0]["received_count"], 1)
+        self.assertEqual(chats[0]["name"], "Customer")
+        timeline = chats[0]["conversation_messages"]
+        self.assertEqual([item["speaker_side"] for item in timeline], ["remote", "local", "local"])
+        self.assertEqual([item["speaker_type"] for item in timeline], ["remote", "operator", "agent"])
 
     def test_grouped_chat_infers_common_local_speaker_across_chats(self) -> None:
         self.service._save_json(
@@ -152,6 +197,7 @@ class AnswersArchivingTests(unittest.TestCase):
             if message["name"] == "Shared Operator"
         ]
         self.assertEqual([item["speaker_side"] for item in local_messages], ["local", "local"])
+        self.assertEqual([item["speaker_type"] for item in local_messages], ["operator", "operator"])
 
     def test_archived_list_prunes_entries_older_than_a_week(self) -> None:
         now_ts = self.service._now_ts()

@@ -2415,15 +2415,24 @@ def create_ui_router(job_secret: str) -> APIRouter:
       color: #f5f2ec;
     }
 
-    #tabAnswers .answers-bubble-agent,
-    #tabAnswers .answers-bubble-local {
+    #tabAnswers .answers-bubble-agent {
       align-self: flex-end;
       background: linear-gradient(180deg, rgba(249, 115, 22, 0.24), rgba(194, 65, 12, 0.16));
       border-color: rgba(249, 115, 22, 0.24);
       color: #fff7ed;
     }
 
-    #tabAnswers .answers-bubble-local .answers-bubble-meta {
+    #tabAnswers .answers-bubble-local,
+    #tabAnswers .answers-bubble-operator {
+      align-self: flex-end;
+      background: linear-gradient(180deg, rgba(245, 158, 11, 0.22), rgba(146, 64, 14, 0.15));
+      border-color: rgba(245, 158, 11, 0.22);
+      color: #fffbeb;
+    }
+
+    #tabAnswers .answers-bubble-agent .answers-bubble-meta,
+    #tabAnswers .answers-bubble-local .answers-bubble-meta,
+    #tabAnswers .answers-bubble-operator .answers-bubble-meta {
       text-align: right;
     }
 
@@ -5058,6 +5067,17 @@ function isLocalAnswersMessage(message) {
   return ['assistant', 'agent', 'bot', 'local'].includes(role);
 }
 
+function answersSpeakerType(message) {
+  const rawType = String(message?.speaker_type || message?.sender_type || '').trim().toLowerCase();
+  if (['agent', 'assistant', 'bot'].includes(rawType)) return 'agent';
+  if (['operator', 'human', 'local_human', 'local-human'].includes(rawType)) return 'operator';
+  if (!isLocalAnswersMessage(message)) return 'remote';
+
+  const role = String(message?.role || '').trim().toLowerCase();
+  if (['assistant', 'agent', 'bot'].includes(role)) return 'agent';
+  return 'operator';
+}
+
 function answersConversationMessages(item) {
   const timeline = Array.isArray(item.conversation_messages) ? item.conversation_messages : [];
   if (timeline.length) return timeline;
@@ -5070,14 +5090,17 @@ function answersConversationMessages(item) {
 }
 
 function renderAnswersBubble(message, fallbackName) {
-  const isLocal = isLocalAnswersMessage(message);
+  const speakerType = answersSpeakerType(message);
+  const isLocal = speakerType !== 'remote';
   const ts = formatTs(message?.timestamp);
   const content = String(message?.content || '').trim();
-  const fallbackAuthor = isLocal ? 'Agent' : fallbackName;
+  const fallbackAuthor = speakerType === 'agent' ? 'Agent' : (isLocal ? 'Local operator' : fallbackName);
   const name = String(message?.name || message?.author || fallbackAuthor || '').trim();
-  const sideClass = isLocal ? 'answers-bubble-local' : 'answers-bubble-remote';
+  const sideClass = speakerType === 'agent'
+    ? 'answers-bubble-agent'
+    : (speakerType === 'operator' ? 'answers-bubble-operator' : 'answers-bubble-remote');
   return `
-    <div class="answers-bubble ${sideClass}" data-speaker-side="${isLocal ? 'local' : 'remote'}">
+    <div class="answers-bubble ${sideClass}" data-speaker-side="${isLocal ? 'local' : 'remote'}" data-speaker-type="${escapeHtml(speakerType)}">
       <p class="answers-bubble-meta">${escapeHtml(name)} · ${escapeHtml(ts)}</p>
       <p class="answers-bubble-text">${escapeHtml(content)}</p>
     </div>

@@ -22,6 +22,7 @@ from agents.support_guidance import (
 
 class AnswersAgentService:
     """Service to review and respond to answers_agent conversations grouped by chat."""
+    DEFAULT_LOCAL_OPERATOR_IDS = ("435649084",)
     # Retain archived conversations for one week, then purge automatically.
     ARCHIVE_RETENTION_SECONDS = 7 * 24 * 60 * 60
     # Spam fingerprints are kept long-term to improve future spam detection.
@@ -558,6 +559,14 @@ class AnswersAgentService:
     def _normalize_speaker_name(value: Any) -> str:
         return re.sub(r"\s+", " ", str(value or "").strip().casefold())
 
+    @staticmethod
+    def _normalize_speaker_id(value: Any) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        digits = re.sub(r"\D+", "", raw)
+        return digits or raw.casefold()
+
     @classmethod
     def _local_speaker_names_from_payload(cls, payload: Dict[str, Any]) -> List[str]:
         if not isinstance(payload, dict):
@@ -586,6 +595,72 @@ class AnswersAgentService:
                 names.append(normalized)
         return names
 
+    @classmethod
+    def _local_speaker_ids_from_payload(cls, payload: Dict[str, Any]) -> List[str]:
+        if not isinstance(payload, dict):
+            return []
+        raw_values: List[Any] = []
+        for key in (
+            "local_speaker_ids",
+            "local_speakers_ids",
+            "local_participant_ids",
+            "local_operator_ids",
+            "local_telegram_user_ids",
+        ):
+            value = payload.get(key)
+            if isinstance(value, list):
+                raw_values.extend(value)
+            elif value is not None:
+                raw_values.extend(str(value).split(","))
+        for key in (
+            "local_speaker_id",
+            "local_participant_id",
+            "local_operator_id",
+            "local_telegram_user_id",
+        ):
+            value = payload.get(key)
+            if value is not None:
+                raw_values.append(value)
+
+        ids: List[str] = []
+        for raw in raw_values:
+            normalized = cls._normalize_speaker_id(raw)
+            if normalized and normalized not in ids:
+                ids.append(normalized)
+        return ids
+
+    @classmethod
+    def _speaker_ids_from_message(cls, message: Dict[str, Any]) -> List[str]:
+        if not isinstance(message, dict):
+            return []
+        raw_values: List[Any] = []
+        for key in (
+            "from_id",
+            "sender_id",
+            "user_id",
+            "telegram_user_id",
+            "telegram_id",
+            "actor_id",
+            "participant_id",
+            "author_id",
+        ):
+            value = message.get(key)
+            if value is not None:
+                raw_values.append(value)
+        for key in ("from", "sender", "actor", "author"):
+            value = message.get(key)
+            if isinstance(value, dict):
+                nested = value.get("id") or value.get("user_id") or value.get("telegram_user_id")
+                if nested is not None:
+                    raw_values.append(nested)
+
+        ids: List[str] = []
+        for raw in raw_values:
+            normalized = cls._normalize_speaker_id(raw)
+            if normalized and normalized not in ids:
+                ids.append(normalized)
+        return ids
+
     @staticmethod
     def _parse_bool_flag(value: Any) -> Optional[bool]:
         if isinstance(value, bool):
@@ -605,9 +680,9 @@ class AnswersAgentService:
                 if parsed is not None:
                     return parsed
 
-        for key in ("speaker_side", "side", "direction", "sender_type"):
+        for key in ("speaker_side", "speaker_type", "side", "direction", "sender_type"):
             value = str(message.get(key) or "").strip().casefold()
-            if value in {"local", "outgoing", "self", "me", "assistant", "agent", "bot"}:
+            if value in {"local", "outgoing", "self", "me", "assistant", "agent", "bot", "operator", "human"}:
                 return True
             if value in {"remote", "incoming", "user", "customer", "external"}:
                 return False
@@ -620,10 +695,15 @@ class AnswersAgentService:
         *,
         role: str,
         local_speaker_names: List[str],
+        local_speaker_ids: List[str],
     ) -> bool:
         explicit = cls._explicit_local_speaker_flag(message)
         if explicit is not None:
             return explicit
+
+        message_ids = cls._speaker_ids_from_message(message)
+        if any(speaker_id in local_speaker_ids for speaker_id in message_ids):
+            return True
 
         display_name = cls._display_name_from_message(message)
         normalized_name = cls._normalize_speaker_name(display_name)
@@ -631,6 +711,31 @@ class AnswersAgentService:
             return True
 
         return role in {"assistant", "agent", "bot", "local"}
+
+    @classmethod
+    def _speaker_type(
+        cls,
+        message: Dict[str, Any],
+        *,
+        role: str,
+        is_local: bool,
+        local_speaker_ids: List[str],
+    ) -> str:
+        if not is_local:
+            return "remote"
+
+        raw_type = str(message.get("speaker_type") or message.get("sender_type") or "").strip().casefold()
+        if raw_type in {"agent", "assistant", "bot"}:
+            return "agent"
+        if raw_type in {"operator", "human", "local_human", "local-human"}:
+            return "operator"
+
+        if role in {"assistant", "agent", "bot"}:
+            return "agent"
+        message_ids = cls._speaker_ids_from_message(message)
+        if any(speaker_id in local_speaker_ids for speaker_id in message_ids):
+            return "operator"
+        return "operator" if role in {"user", "local"} else "agent"
 
     @staticmethod
     def _merge_speaker_names(*groups: List[str]) -> List[str]:
@@ -1061,6 +1166,10 @@ class AnswersAgentService:
             self._local_speaker_names_from_payload(conversations),
             self._infer_common_local_speaker_names(users),
         )
+        global_local_speaker_ids = self._merge_speaker_names(
+            list(self.DEFAULT_LOCAL_OPERATOR_IDS),
+            self._local_speaker_ids_from_payload(conversations),
+        )
         message_sequence = 0
         for user_id, user_entry in users.items():
             if not isinstance(user_entry, dict):
@@ -1072,6 +1181,10 @@ class AnswersAgentService:
             user_local_speaker_names = self._merge_speaker_names(
                 global_local_speaker_names,
                 self._local_speaker_names_from_payload(user_entry),
+            )
+            user_local_speaker_ids = self._merge_speaker_names(
+                global_local_speaker_ids,
+                self._local_speaker_ids_from_payload(user_entry),
             )
             for message in messages:
                 if not isinstance(message, dict):
@@ -1104,13 +1217,26 @@ class AnswersAgentService:
                     self._local_speaker_names_from_payload(grouped_chat),
                     self._local_speaker_names_from_payload(message),
                 )
+                local_speaker_ids = self._merge_speaker_names(
+                    user_local_speaker_ids,
+                    self._local_speaker_ids_from_payload(grouped_chat),
+                    self._local_speaker_ids_from_payload(message),
+                )
 
                 message_is_local = False
+                speaker_type = "remote"
                 if role in {"user", "assistant", "agent", "bot", "local"} and content:
                     message_is_local = self._is_local_speaker(
                         message,
                         role=role,
                         local_speaker_names=local_speaker_names,
+                        local_speaker_ids=local_speaker_ids,
+                    )
+                    speaker_type = self._speaker_type(
+                        message,
+                        role=role,
+                        is_local=message_is_local,
+                        local_speaker_ids=local_speaker_ids,
                     )
                     context_role = "assistant" if message_is_local else "user"
                     grouped_chat["context_messages"].append(
@@ -1132,6 +1258,7 @@ class AnswersAgentService:
                             "user_id": str(user_id),
                             "name": name,
                             "speaker_side": "local" if message_is_local else "remote",
+                            "speaker_type": speaker_type,
                             "_sequence": message_sequence,
                         }
                     )

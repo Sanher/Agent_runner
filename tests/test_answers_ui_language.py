@@ -31,6 +31,7 @@ class AnswersUiLanguageTests(unittest.TestCase):
         self.assertIn("Unarchive", html)
         self.assertIn("conversation_messages", html)
         self.assertIn("answers-bubble-local", html)
+        self.assertIn("answers-bubble-operator", html)
         self.assertIn("answers-bubble-remote", html)
         self.assertIn("Archived conversations are auto-deleted after 7 days.", html)
         self.assertNotIn("No hay chats con mensajes recibidos todavía.", html)
