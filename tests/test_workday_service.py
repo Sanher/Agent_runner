@@ -4,6 +4,7 @@ import sys
 import tempfile
 import types
 import unittest
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 def _load_workday_service():
@@ -87,34 +88,43 @@ class WorkdayServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             svc = self._build_service(base)
+            today = date.today()
+            start = (today + timedelta(days=1)).isoformat()
+            blocked_day = (today + timedelta(days=2)).isoformat()
+            end = (today + timedelta(days=3)).isoformat()
+            unblocked_day = (today + timedelta(days=5)).isoformat()
 
-            updated = svc.update_settings("2026-02-20", "2026-02-22")
-            self.assertEqual(updated["blocked_start_date"], "2026-02-20")
-            self.assertEqual(updated["blocked_end_date"], "2026-02-22")
-            self.assertTrue(svc.is_automatic_start_blocked_for_day("2026-02-21"))
-            self.assertFalse(svc.is_automatic_start_blocked_for_day("2026-02-25"))
+            updated = svc.update_settings(start, end)
+            self.assertEqual(updated["blocked_start_date"], start)
+            self.assertEqual(updated["blocked_end_date"], end)
+            self.assertTrue(svc.is_automatic_start_blocked_for_day(blocked_day))
+            self.assertFalse(svc.is_automatic_start_blocked_for_day(unblocked_day))
 
             reloaded = self._build_service(base)
-            self.assertEqual(reloaded.get_settings()["blocked_start_date"], "2026-02-20")
-            self.assertEqual(reloaded.get_settings()["blocked_end_date"], "2026-02-22")
+            self.assertEqual(reloaded.get_settings()["blocked_start_date"], start)
+            self.assertEqual(reloaded.get_settings()["blocked_end_date"], end)
 
     def test_build_planned_clicks_uses_given_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             svc = self._build_service(Path(tmp))
+            first_click = datetime(2026, 4, 27, 8, 0, 0).timestamp()
+            start_break = first_click + (4 * 3600)
+            stop_break = start_break + (15 * 60)
+            final_click = first_click + (7 * 3600) + (45 * 60)
             planned = svc._build_planned_clicks(
-                first_click_ts=1000.0,
-                planned_start_break_ts=2000.0,
-                planned_stop_break_ts=3000.0,
-                planned_final_ts=4000.0,
+                first_click_ts=first_click,
+                planned_start_break_ts=start_break,
+                planned_stop_break_ts=stop_break,
+                planned_final_ts=final_click,
             )
-            self.assertEqual(planned["planned_start_break_ts"], 2000.0)
-            self.assertEqual(planned["planned_stop_break_ts"], 3000.0)
-            self.assertEqual(planned["planned_final_ts"], 4000.0)
+            self.assertEqual(planned["planned_start_break_ts"], start_break)
+            self.assertEqual(planned["planned_stop_break_ts"], stop_break)
+            self.assertEqual(planned["planned_final_ts"], final_click)
 
     def test_build_planned_clicks_generated_ranges(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             svc = self._build_service(Path(tmp))
-            first_click = 10_000.0
+            first_click = datetime(2026, 4, 27, 8, 0, 0).timestamp()
             planned = svc._build_planned_clicks(first_click_ts=first_click)
 
             start_ts = planned["planned_start_break_ts"]
@@ -126,8 +136,77 @@ class WorkdayServiceTests(unittest.TestCase):
             self.assertLessEqual(stop_ts, start_ts + (15 * 60) + 59)
 
             final_ts = planned["planned_final_ts"]
-            self.assertGreaterEqual(final_ts, first_click + (7 * 3600) + (45 * 60))
-            self.assertLessEqual(final_ts, first_click + (7 * 3600) + (45 * 60) + 59)
+            self.assertGreaterEqual(final_ts, first_click + (7 * 3600) + (44 * 60))
+            self.assertLessEqual(final_ts, first_click + (7 * 3600) + (46 * 60))
+
+    def test_minimum_first_click_preserves_final_duration_after_local_15(self) -> None:
+        first_click = WorkdayAgentService._minimum_first_click_dt_for_final_day(
+            datetime(2026, 4, 27, 12, 0, 0)
+        )
+
+        self.assertEqual(first_click, datetime(2026, 4, 27, 7, 14, 0))
+
+    def test_first_click_window_starts_late_enough_for_local_15(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            first_start, first_end, rescue_end = svc._first_click_window()
+
+            self.assertEqual(first_start.strftime("%H:%M:%S"), "07:14:00")
+            self.assertEqual(first_end.strftime("%H:%M:%S"), "08:31:00")
+            self.assertEqual(rescue_end.strftime("%H:%M:%S"), "09:30:00")
+
+    def test_build_planned_clicks_respects_minimum_final_without_exceeding_max_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            first_click = datetime(2026, 4, 27, 7, 14, 30).timestamp()
+            earliest_final = datetime(2026, 4, 27, 15, 0, 0).timestamp()
+            max_final = first_click + WorkdayAgentService.FINAL_CLICK_MAX_DELAY_SECONDS
+
+            planned = svc._build_planned_clicks(first_click_ts=first_click)
+            final_ts = planned["planned_final_ts"]
+
+            self.assertGreaterEqual(final_ts, earliest_final)
+            self.assertLessEqual(final_ts, max_final)
+
+    def test_build_planned_clicks_caps_manual_too_early_start_at_max_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            first_click = datetime(2026, 4, 27, 6, 58, 0).timestamp()
+            max_final = first_click + WorkdayAgentService.FINAL_CLICK_MAX_DELAY_SECONDS
+
+            with self.assertLogs("tests.workday", level="WARNING"):
+                planned = svc._build_planned_clicks(first_click_ts=first_click)
+            final_ts = planned["planned_final_ts"]
+
+            self.assertEqual(final_ts, max_final)
+
+    def test_build_planned_clicks_clamps_persisted_final_before_local_15(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            first_click = datetime(2026, 4, 27, 7, 14, 0).timestamp()
+            persisted_final = datetime(2026, 4, 27, 14, 59, 0).timestamp()
+            earliest_final = datetime(2026, 4, 27, 15, 0, 0).timestamp()
+
+            planned = svc._build_planned_clicks(
+                first_click_ts=first_click,
+                planned_final_ts=persisted_final,
+            )
+
+            self.assertEqual(planned["planned_final_ts"], earliest_final)
+
+    def test_build_planned_clicks_caps_persisted_final_after_max_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            first_click = datetime(2026, 4, 27, 8, 0, 0).timestamp()
+            persisted_final = datetime(2026, 4, 27, 16, 0, 0).timestamp()
+            max_final = first_click + WorkdayAgentService.FINAL_CLICK_MAX_DELAY_SECONDS
+
+            planned = svc._build_planned_clicks(
+                first_click_ts=first_click,
+                planned_final_ts=persisted_final,
+            )
+
+            self.assertEqual(planned["planned_final_ts"], max_final)
 
     def test_is_playwright_executable_error(self) -> None:
         err = RuntimeError("BrowserType.launch: Executable doesn't exist at /ms-playwright/chromium")

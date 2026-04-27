@@ -20,6 +20,10 @@ AGENT_NAME = "workday_agent"
 class WorkdayAgentService:
     """Agent for phased web automation."""
     ACTIVE_PHASES = {"waiting_start", "working_before_break", "on_break", "working_after_break"}
+    FINAL_CLICK_MIN_HOUR = 15
+    FINAL_CLICK_MIN_MINUTE = 0
+    FINAL_CLICK_MIN_DELAY_SECONDS = (7 * 3600) + (44 * 60)
+    FINAL_CLICK_MAX_DELAY_SECONDS = (7 * 3600) + (46 * 60)
 
     def __init__(
         self,
@@ -470,16 +474,52 @@ class WorkdayAgentService:
             stop_max = stop_base + (15 * 60) + 59
             stop_ts = random.uniform(stop_min, stop_max)
 
+        min_final_ts = self._minimum_final_click_ts(first_click_ts)
+        duration_min_ts = first_click_ts + self.FINAL_CLICK_MIN_DELAY_SECONDS
+        duration_max_ts = first_click_ts + self.FINAL_CLICK_MAX_DELAY_SECONDS
+        final_earliest = max(duration_min_ts, min_final_ts)
+        final_latest = duration_max_ts
+        if final_earliest > final_latest:
+            self.logger.warning(
+                "Cannot keep final click at or after minimum local time within maximum session duration; "
+                "using maximum duration cap first_click=%s minimum_final=%s maximum_final=%s",
+                self._timestamp_to_local_iso(first_click_ts),
+                self._timestamp_to_local_iso(min_final_ts),
+                self._timestamp_to_local_iso(final_latest),
+            )
+            final_earliest = final_latest
+
         if final_ts <= 0:
-            final_earliest = first_click_ts + (7 * 3600) + (45 * 60)
-            final_latest = final_earliest + 59
             final_ts = random.uniform(final_earliest, final_latest)
+        else:
+            final_ts = min(max(final_ts, final_earliest), final_latest)
 
         return {
             "planned_start_break_ts": start_ts,
             "planned_stop_break_ts": stop_ts,
             "planned_final_ts": final_ts,
         }
+
+    @classmethod
+    def _minimum_final_click_ts(cls, first_click_ts: float) -> float:
+        first_click_day = datetime.fromtimestamp(first_click_ts)
+        return cls._minimum_final_click_dt_for_day(first_click_day).timestamp()
+
+    @classmethod
+    def _minimum_final_click_dt_for_day(cls, reference_dt: datetime) -> datetime:
+        # Exact boundary: 15:00:00 local time is allowed; any earlier second is clamped.
+        return reference_dt.replace(
+            hour=cls.FINAL_CLICK_MIN_HOUR,
+            minute=cls.FINAL_CLICK_MIN_MINUTE,
+            second=0,
+            microsecond=0,
+        )
+
+    @classmethod
+    def _minimum_first_click_dt_for_final_day(cls, reference_dt: datetime) -> datetime:
+        return cls._minimum_final_click_dt_for_day(reference_dt) - timedelta(
+            seconds=cls.FINAL_CLICK_MAX_DELAY_SECONDS
+        )
 
     @staticmethod
     def _same_local_day(ts_a: float, ts_b: float) -> bool:
@@ -908,8 +948,9 @@ class WorkdayAgentService:
             return state
 
         # before_start o cualquier valor no esperado
-        first_start = self._today_at(6, 58).timestamp()
-        rescue_end = self._today_at(9, 30).timestamp()
+        first_start_dt, _, rescue_end_dt = self._first_click_window()
+        first_start = first_start_dt.timestamp()
+        rescue_end = rescue_end_dt.timestamp()
         if state.get("blocked_today"):
             start_text = state.get("blocked_start_date", "")
             end_text = state.get("blocked_end_date", "")
@@ -933,6 +974,16 @@ class WorkdayAgentService:
     def _today_at(hour: int, minute: int, second: int = 0) -> datetime:
         now = datetime.now()
         return now.replace(hour=hour, minute=minute, second=second, microsecond=0)
+
+    def _first_click_window(self):
+        configured_start = self._today_at(6, 58)
+        first_start = max(
+            configured_start,
+            self._minimum_first_click_dt_for_final_day(configured_start),
+        )
+        first_end = self._today_at(8, 31)
+        rescue_end = self._today_at(9, 30)
+        return first_start, first_end, rescue_end
 
     @staticmethod
     def _human_pause(min_ms: int = 120, max_ms: int = 320) -> None:
@@ -1172,7 +1223,9 @@ class WorkdayAgentService:
             job=job_name,
             planned_from_state=True,
         )
-        start_deadline_ts = self._today_at(9, 30).timestamp()
+        first_start_dt, _, rescue_end_dt = self._first_click_window()
+        minimum_first_ts = first_start_dt.timestamp()
+        start_deadline_ts = rescue_end_dt.timestamp()
 
         browser = None
         context = None
@@ -1194,6 +1247,24 @@ class WorkdayAgentService:
                     raise RuntimeError("Invalid persisted state: missing planned_first_ts")
                 if planned_first_ts > start_deadline_ts + 300:
                     raise RuntimeError("Invalid persisted state: planned_first_ts is outside the allowed window")
+                if planned_first_ts < minimum_first_ts:
+                    original_planned_first_ts = planned_first_ts
+                    planned_first_ts = minimum_first_ts
+                    self.logger.info(
+                        "Adjusted persisted first click to preserve minimum final time: original=%s adjusted=%s",
+                        self._timestamp_to_local_iso(original_planned_first_ts),
+                        self._timestamp_to_local_iso(planned_first_ts),
+                    )
+                    self._set_runtime_state(
+                        "waiting_start",
+                        "Waiting to start",
+                        run_id=run_id,
+                        job=job_name,
+                        ok=None,
+                        planned_first_ts=planned_first_ts,
+                        original_planned_first_ts=original_planned_first_ts,
+                        adjusted_minimum_start=True,
+                    )
                 if now_ts > start_deadline_ts + 300:
                     raise RuntimeError("Start window expired; automatic resume is disabled")
 
@@ -1571,9 +1642,7 @@ class WorkdayAgentService:
             run_dir,
         )
 
-        first_start = self._today_at(6, 58)
-        first_end = self._today_at(8, 31)
-        rescue_end = self._today_at(9, 30)
+        first_start, first_end, rescue_end = self._first_click_window()
 
         with sync_playwright() as p:
             browser = self._launch_browser(p, run_id=run_id, job_name=job_name, headless=True)
