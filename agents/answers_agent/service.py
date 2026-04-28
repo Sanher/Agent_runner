@@ -559,6 +559,16 @@ class AnswersAgentService:
     def _normalize_speaker_name(value: Any) -> str:
         return re.sub(r"\s+", " ", str(value or "").strip().casefold())
 
+    @classmethod
+    def _is_generic_display_name(cls, value: Any) -> bool:
+        normalized = cls._normalize_speaker_name(value)
+        return (
+            not normalized
+            or normalized.startswith("user_")
+            or normalized.startswith("chat_")
+            or normalized == "unknown_user"
+        )
+
     @staticmethod
     def _normalize_speaker_id(value: Any) -> str:
         raw = str(value or "").strip()
@@ -696,6 +706,7 @@ class AnswersAgentService:
         role: str,
         local_speaker_names: List[str],
         local_speaker_ids: List[str],
+        remote_speaker_names: List[str],
     ) -> bool:
         explicit = cls._explicit_local_speaker_flag(message)
         if explicit is not None:
@@ -708,6 +719,13 @@ class AnswersAgentService:
         display_name = cls._display_name_from_message(message)
         normalized_name = cls._normalize_speaker_name(display_name)
         if normalized_name and normalized_name in local_speaker_names:
+            return True
+        if (
+            role == "user"
+            and normalized_name
+            and remote_speaker_names
+            and normalized_name not in remote_speaker_names
+        ):
             return True
 
         return role in {"assistant", "agent", "bot", "local"}
@@ -1222,6 +1240,11 @@ class AnswersAgentService:
                     self._local_speaker_ids_from_payload(grouped_chat),
                     self._local_speaker_ids_from_payload(message),
                 )
+                remote_speaker_names = [
+                    self._normalize_speaker_name(name)
+                    for name in (grouped_chat.get("name"), fallback_name)
+                    if not self._is_generic_display_name(name)
+                ]
 
                 message_is_local = False
                 speaker_type = "remote"
@@ -1231,6 +1254,7 @@ class AnswersAgentService:
                         role=role,
                         local_speaker_names=local_speaker_names,
                         local_speaker_ids=local_speaker_ids,
+                        remote_speaker_names=remote_speaker_names,
                     )
                     speaker_type = self._speaker_type(
                         message,

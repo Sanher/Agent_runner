@@ -142,6 +142,40 @@ class AnswersArchivingTests(unittest.TestCase):
         self.assertEqual([item["speaker_side"] for item in timeline], ["remote", "local", "local"])
         self.assertEqual([item["speaker_type"] for item in timeline], ["remote", "operator", "agent"])
 
+    def test_grouped_chat_marks_distinct_named_user_as_local_operator(self) -> None:
+        self.service._save_json(
+            self.service.conversations_path,
+            {
+                "users": {
+                    "2002": {
+                        "display_name": "Customer",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "External question",
+                                "chat_id": 1001,
+                                "timestamp": 100,
+                                "name": "Customer",
+                            },
+                            {
+                                "role": "user",
+                                "content": "Local operator answer without sender id",
+                                "chat_id": 1001,
+                                "timestamp": 101,
+                                "name": "Local Operator",
+                            },
+                        ],
+                    }
+                },
+            },
+        )
+
+        chats = self.service.list_chats_grouped()
+        self.assertEqual(chats[0]["received_count"], 1)
+        timeline = chats[0]["conversation_messages"]
+        self.assertEqual([item["speaker_side"] for item in timeline], ["remote", "local"])
+        self.assertEqual([item["speaker_type"] for item in timeline], ["remote", "operator"])
+
     def test_grouped_chat_infers_common_local_speaker_across_chats(self) -> None:
         self.service._save_json(
             self.service.conversations_path,
