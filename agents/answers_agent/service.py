@@ -723,6 +723,7 @@ class AnswersAgentService:
         if (
             role == "user"
             and normalized_name
+            and not local_speaker_names
             and remote_speaker_names
             and normalized_name not in remote_speaker_names
         ):
@@ -770,8 +771,6 @@ class AnswersAgentService:
         for user_id, user_entry in users.items():
             if not isinstance(user_entry, dict):
                 continue
-            fallback_name = cls._default_display_name(user_entry, str(user_id))
-            fallback_name_key = cls._normalize_speaker_name(fallback_name)
             messages = user_entry.get("messages", [])
             if not isinstance(messages, list):
                 continue
@@ -782,7 +781,7 @@ class AnswersAgentService:
                 if role in {"assistant", "agent", "bot", "local"}:
                     continue
                 name_key = cls._normalize_speaker_name(cls._display_name_from_message(message))
-                if not name_key or name_key == fallback_name_key:
+                if cls._is_generic_display_name(name_key):
                     continue
                 chat_id = message.get("chat_id")
                 if chat_id is None:

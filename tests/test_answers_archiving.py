@@ -233,6 +233,60 @@ class AnswersArchivingTests(unittest.TestCase):
         self.assertEqual([item["speaker_side"] for item in local_messages], ["local", "local"])
         self.assertEqual([item["speaker_type"] for item in local_messages], ["operator", "operator"])
 
+    def test_grouped_chat_uses_remote_name_when_local_operator_is_entry_display_name(self) -> None:
+        self.service._save_json(
+            self.service.conversations_path,
+            {
+                "users": {
+                    "2002": {
+                        "display_name": "Shared Operator",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "First external question",
+                                "chat_id": 1001,
+                                "timestamp": 100,
+                                "name": "Remote One",
+                            },
+                            {
+                                "role": "user",
+                                "content": "First local answer",
+                                "chat_id": 1001,
+                                "timestamp": 101,
+                                "name": "Shared Operator",
+                            },
+                        ],
+                    },
+                    "3003": {
+                        "display_name": "Shared Operator",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "Second external question",
+                                "chat_id": 2002,
+                                "timestamp": 200,
+                                "name": "Remote Two",
+                            },
+                            {
+                                "role": "user",
+                                "content": "Second local answer",
+                                "chat_id": 2002,
+                                "timestamp": 201,
+                                "name": "Shared Operator",
+                            },
+                        ],
+                    },
+                },
+            },
+        )
+
+        chats = sorted(self.service.list_chats_grouped(), key=lambda item: int(item["chat_id"]))
+        self.assertEqual([item["name"] for item in chats], ["Remote One", "Remote Two"])
+        self.assertEqual([item["received_count"] for item in chats], [1, 1])
+        timelines = [chat["conversation_messages"] for chat in chats]
+        self.assertEqual([item["speaker_type"] for item in timelines[0]], ["remote", "operator"])
+        self.assertEqual([item["speaker_type"] for item in timelines[1]], ["remote", "operator"])
+
     def test_archived_list_prunes_entries_older_than_a_week(self) -> None:
         now_ts = self.service._now_ts()
         stale_ts = now_ts - self.service.ARCHIVE_RETENTION_SECONDS - 30
