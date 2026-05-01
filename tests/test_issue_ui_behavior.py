@@ -44,6 +44,9 @@ class IssueUiBehaviorTests(unittest.TestCase):
         self.assertIn("setIssueLogToggle(false, true);", html)
         self.assertIn("setIssueLogToggle(true, false);", html)
         self.assertIn("setIssueLogToggle(true, true);", html)
+        self.assertIn("function makeIssueSubmitRunId(", html)
+        self.assertIn("const issuePayload = Object.assign({}, currentIssue, {submit_run_id: expectedRunId});", html)
+        self.assertIn("issue: issuePayload", html)
         self.assertRegex(html, re.compile(r"Todo OK: issue created and all post-create clicks succeeded"))
 
     def test_issue_ui_contains_separate_collapsed_historical_log_panel(self) -> None:

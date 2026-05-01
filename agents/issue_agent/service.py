@@ -221,6 +221,15 @@ class IssueAgentService:
     def now_id() -> str:
         return time.strftime("%Y%m%d-%H%M%S")
 
+    def _resolve_submit_run_id(self, issue: Dict[str, Any]) -> str:
+        explicit_run_id = str(issue.get("submit_run_id", "") or issue.get("run_id", "")).strip()
+        if explicit_run_id:
+            run_id_raw = explicit_run_id
+        else:
+            issue_id = str(issue.get("issue_id", "")).strip() or f"issue-{self.now_id()}"
+            run_id_raw = f"{issue_id}-submit-{self.now_id()}-{time.time_ns() % 1_000_000:06d}"
+        return re.sub(r"[^a-zA-Z0-9._-]+", "-", run_id_raw).strip("-") or f"issue-{self.now_id()}"
+
     def _artifact_dir(self, job: str, run_id: str) -> Path:
         run_dir = self.data_dir / "runs" / str(job).strip() / str(run_id).strip()
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -1211,8 +1220,7 @@ class IssueAgentService:
                 active_run_id or "unknown",
             )
 
-        run_id_raw = str(issue.get("issue_id", "")).strip() or f"issue-{self.now_id()}"
-        run_id = re.sub(r"[^a-zA-Z0-9._-]+", "-", run_id_raw).strip("-") or f"issue-{self.now_id()}"
+        run_id = self._resolve_submit_run_id(issue)
         run_dir = self._artifact_dir("issue_flow", run_id)
         artifacts: Dict[str, Dict[str, str]] = {}
         page = None
@@ -1547,6 +1555,33 @@ class IssueAgentService:
             locator.click(timeout=timeout_ms)
         except Exception:
             locator.click(timeout=timeout_ms, force=True)
+
+    def _fill_issue_title(self, page, title: str) -> None:
+        title_text = str(title or "").strip()
+        if not title_text or title_text == "[NEW]":
+            raise RuntimeError("Generated issue title is empty")
+        title_input = page.locator('input[aria-label="Add a title"], input[placeholder="Title"]').first
+        title_input.wait_for(state="visible", timeout=8000)
+        title_input.fill("")
+        title_input.fill(title_text)
+        try:
+            current_value = str(title_input.input_value(timeout=1200) or "").strip()
+        except Exception:
+            return
+        if current_value != title_text:
+            self.logger.warning(
+                "Issue flow: title fill verification mismatch; retrying (expected_length=%s, actual_length=%s)",
+                len(title_text),
+                len(current_value),
+            )
+            title_input.fill("")
+            title_input.fill(title_text)
+            try:
+                current_value = str(title_input.input_value(timeout=1200) or "").strip()
+            except Exception:
+                current_value = title_text
+        if current_value != title_text:
+            raise RuntimeError("Issue title remained empty after fill")
 
     def _open_project_field_button(self, page, label: str, timeout_ms: int = 5000) -> None:
         last_error: Optional[Exception] = None
@@ -2255,13 +2290,14 @@ class IssueAgentService:
             title = f"[NEW] {title}"
         description = str(issue.get("description", "")).strip()
 
-        page.locator('input[aria-label="Add a title"]').first.fill(title)
+        self._fill_issue_title(page, title)
         markdown_area = page.locator('textarea[aria-label="Markdown value"]').first
         markdown_area.fill("")
         markdown_area.fill(description)
 
         self._open_projects_editor(page)
         self._ensure_project_selected(page)
+        self._fill_issue_title(page, title)
 
         self._click_create_and_wait_created(
             page,

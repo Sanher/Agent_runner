@@ -4014,6 +4014,15 @@ function setIssueActiveRunId(runId) {
   updateIssueRunControls();
 }
 
+function makeIssueSubmitRunId(issueId) {
+  const base = String(issueId || 'issue')
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'issue';
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '');
+  return `${base}-submit-${stamp}`;
+}
+
 function updateIssueRunControls() {
   const input = document.getElementById('issueRunId');
   const state = document.getElementById('issueRunResolvedState');
@@ -4518,7 +4527,8 @@ async function submitIssueDraft() {
   document.getElementById('issueSubmitStatus').innerText = '';
   // While Playwright is running, keep the log panel visible as live output.
   setIssueLogToggle(false, true);
-  const expectedRunId = String((currentIssue && currentIssue.issue_id) || '').trim();
+  const expectedRunId = makeIssueSubmitRunId((currentIssue && currentIssue.issue_id) || '');
+  const issuePayload = Object.assign({}, currentIssue, {submit_run_id: expectedRunId});
   if (expectedRunId) {
     issueResolvedRunIds.delete(expectedRunId);
     setIssueActiveRunId(expectedRunId);
@@ -4531,7 +4541,7 @@ async function submitIssueDraft() {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        issue: currentIssue,
+        issue: issuePayload,
         selectors: {},
         non_headless: false
       })

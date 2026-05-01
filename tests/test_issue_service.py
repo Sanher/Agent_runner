@@ -168,6 +168,47 @@ class _FrontendSubmitPage:
         return None
 
 
+class _ManagementFeatureTitleLocator(_SuccessLocator):
+    def __init__(self, page):
+        self.page = page
+
+    def fill(self, text, *args, **kwargs):
+        self.page.title_value = str(text)
+        self.page.title_fills.append(str(text))
+        return None
+
+    def input_value(self, *args, **kwargs):
+        return self.page.title_value
+
+
+class _ManagementFeatureTextareaLocator(_SuccessLocator):
+    def __init__(self, page):
+        self.page = page
+
+    def fill(self, text, *args, **kwargs):
+        self.page.description_value = str(text)
+        return None
+
+
+class _ManagementFeatureSubmitPage:
+    def __init__(self):
+        self.title_value = ""
+        self.description_value = ""
+        self.title_fills: list[str] = []
+        self.title_at_create = ""
+
+    def locator(self, selector, *args, **kwargs):
+        selector_text = str(selector)
+        if 'input[aria-label="Add a title"]' in selector_text:
+            return _ManagementFeatureTitleLocator(self)
+        if 'textarea[aria-label="Markdown value"]' in selector_text:
+            return _ManagementFeatureTextareaLocator(self)
+        return _SuccessLocator()
+
+    def wait_for_timeout(self, *args, **kwargs):
+        return None
+
+
 class _FlakyFieldLocator:
     def __init__(self):
         self.attempts = 0
@@ -567,6 +608,28 @@ class IssueServiceTests(unittest.TestCase):
             warning = svc._apply_bug_parent_relationship(page=None, repo="frontend")
             self.assertIsInstance(warning, str)
             self.assertIn("Parent relationship skipped", warning)
+
+    def test_resolve_submit_run_id_prefers_explicit_submit_run_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            run_id = svc._resolve_submit_run_id(
+                {
+                    "issue_id": "issue-1",
+                    "submit_run_id": "issue 1 submit attempt",
+                }
+            )
+
+            self.assertEqual("issue-1-submit-attempt", run_id)
+
+    def test_resolve_submit_run_id_generates_unique_submit_attempts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            first = svc._resolve_submit_run_id({"issue_id": "issue-1"})
+            second = svc._resolve_submit_run_id({"issue_id": "issue-1"})
+
+            self.assertTrue(first.startswith("issue-1-submit-"))
+            self.assertTrue(second.startswith("issue-1-submit-"))
+            self.assertNotEqual(first, second)
 
     def test_apply_post_creation_fields_is_non_blocking_and_returns_warnings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -994,6 +1057,40 @@ class IssueServiceTests(unittest.TestCase):
             )
 
             self.assertEqual("LOCKS, AUDITS - inconsistency in aggregation", draft["title"])
+
+    def test_submit_management_feature_refills_title_after_project_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _ManagementFeatureSubmitPage()
+
+            def _clear_title_after_project(_page):
+                page.title_value = ""
+
+            def _capture_create_title(*args, **kwargs):
+                page.title_at_create = page.title_value
+
+            svc._open_projects_editor = lambda _page: None
+            svc._ensure_project_selected = _clear_title_after_project
+            svc._click_create_and_wait_created = _capture_create_title
+            svc._apply_issue_type = lambda _page, _issue_type: None
+            svc._apply_post_creation_fields = lambda *args, **kwargs: []
+            svc._apply_management_epic_new_feature = lambda _page: None
+
+            svc._submit_management_feature_issue(
+                page,
+                {
+                    "issue_id": "issue-1",
+                    "repo": "management",
+                    "issue_type": "feature",
+                    "title": "Add alert reactivation button",
+                    "description": "desc",
+                    "unit": "customer",
+                    "as_new_feature": True,
+                },
+            )
+
+            self.assertEqual("[NEW] Add alert reactivation button", page.title_at_create)
+            self.assertGreaterEqual(page.title_fills.count("[NEW] Add alert reactivation button"), 2)
 
     def test_apply_issue_type_accepts_menuitem_options(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
