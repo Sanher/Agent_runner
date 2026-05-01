@@ -123,6 +123,17 @@
 - Suggest a new worktree when the change is likely to touch different ownership areas and would benefit from a separate branch/history.
 - Do not suggest a new worktree for every small bug or tiny follow-up inside an already active agent workspace.
 
+### Inicio De Tareas En Worktrees
+
+- Antes de empezar una tarea en un worktree/rama específica de agente, actualizarlo contra `origin/main` siempre que sea seguro.
+- Flujo preferido en worktrees de agente:
+  1. Revisar `git status --short --branch`.
+  2. Ejecutar `git fetch origin --tags`.
+  3. Ejecutar `git rebase origin/main`.
+- Si el worktree tiene cambios sin commit, no hacer rebase automáticamente; revisar el estado y pedir confirmación si hay riesgo de mezclar o reescribir trabajo.
+- En el worktree principal/canónico que tenga `main`, usar `git fetch origin --tags` y `git pull --ff-only origin main` en lugar de rebase.
+- Si la rama del worktree ya tiene commits compartidos o publicados y el rebase puede reescribir historia ajena, pedir confirmación antes de continuar.
+
 ### Subida A Main Desde Worktrees
 
 - Cuando el trabajo se haga en un worktree/rama específica de agente, no es obligatorio abrir PR si el remoto permite push directo a `main`.
@@ -170,6 +181,7 @@
   - `routers/issue_agent.py`
   - Issue-specific tests
   - Issue-only sections of `routers/ui.py`
+  - Issue-specific snapshots used to extract or verify Agent Runner Docker state must live under `./config/issues_snapshots` inside the Home Assistant volume.
 - `answers` workspace owns primarily:
   - `agents/answers_agent/**`
   - `routers/answers_agent.py`
