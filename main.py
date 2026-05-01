@@ -201,7 +201,7 @@ WORKDAY_WEBHOOK_STOP_BREAK_URL = _setting("workday_webhook_stop_break_url", "")
 
 # Email agent (email + IMAP)
 EMAIL_OPENAI_API_KEY = _setting_with_aliases("email_openai_api_key", ["openai_api_key"], "")
-EMAIL_OPENAI_MODEL = _setting_with_aliases("email_openai_model", ["openai_model"], "gpt-4o-mini")
+EMAIL_OPENAI_MODEL = _setting_with_aliases("email_openai_model", ["openai_model"], "gpt-5-mini")
 EMAIL_IMAP_EMAIL = _setting_with_aliases("email_imap_email", ["gmail_email"], "")
 EMAIL_IMAP_PASSWORD = _setting_with_aliases("email_imap_password", ["gmail_app_password"], "")
 EMAIL_IMAP_HOST = _setting_with_aliases("email_imap_host", ["gmail_imap_host"], "imap.gmail.com")
@@ -255,7 +255,7 @@ ISSUE_REPO_BASE_URL = _setting("issue_repo_base_url", "")
 ISSUE_PROJECT_NAME = _setting("issue_project_name", "")
 ISSUE_STORAGE_STATE_PATH = _setting("issue_storage_state_path", "")
 ISSUE_OPENAI_API_KEY = _setting_with_aliases("issue_openai_api_key", ["openai_api_key"], "")
-ISSUE_OPENAI_MODEL = _setting_with_aliases("issue_openai_model", ["openai_model"], "gpt-4o-mini")
+ISSUE_OPENAI_MODEL = _setting_with_aliases("issue_openai_model", ["openai_model"], "gpt-5-mini")
 ISSUE_OPENAI_STYLE_LAW = _setting(
     "issue_openai_style_law",
     "Write clear, actionable issues with enough technical context.",
@@ -319,7 +319,7 @@ ANSWERS_OPENAI_API_KEY = _setting_with_aliases(
 ANSWERS_OPENAI_MODEL = _setting_with_aliases(
     "answers_openai_model",
     ["openai_model"],
-    "gpt-4o-mini",
+    "gpt-5-mini",
 )
 ANSWERS_REQUEST_TIMEOUT_SECONDS = max(5, _setting_int("answers_request_timeout_seconds", 30))
 ANSWERS_TELEGRAM_WEBHOOK_SECRETS = _setting_values_with_aliases(

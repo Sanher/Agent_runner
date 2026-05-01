@@ -11,7 +11,7 @@ class EmailWebhookPayloadTests(unittest.TestCase):
         return EmailAgentService(
             data_dir=data_dir,
             openai_api_key="sk-test",
-            openai_model="gpt-4o-mini",
+            openai_model="gpt-5-mini",
             gmail_email="imap@example.com",
             gmail_app_password="imap-pass",
             gmail_imap_host="imap.example.com",

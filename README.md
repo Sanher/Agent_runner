@@ -52,7 +52,7 @@ Campos obligatorios para ejecución automática:
 ### Agente correo (`email_agent`)
 
 - `EMAIL_OPENAI_API_KEY` (legacy: `OPENAI_API_KEY`)
-- `EMAIL_OPENAI_MODEL` (legacy: `OPENAI_MODEL`, por defecto `gpt-4o-mini`)
+- `EMAIL_OPENAI_MODEL` (legacy: `OPENAI_MODEL`, por defecto `gpt-5-mini`)
 - `EMAIL_IMAP_EMAIL` (legacy: `GMAIL_EMAIL`)
 - `EMAIL_IMAP_PASSWORD` (legacy: `GMAIL_APP_PASSWORD`)
 - `EMAIL_IMAP_HOST` (legacy: `GMAIL_IMAP_HOST`, por defecto `imap.gmail.com`)
@@ -95,7 +95,7 @@ Firma con imágenes inline (opcional):
 
 - `ISSUE_TARGET_WEB_URL`
 - `ISSUE_OPENAI_API_KEY` (legacy: `OPENAI_API_KEY`)
-- `ISSUE_OPENAI_MODEL` (legacy: `OPENAI_MODEL`, por defecto `gpt-4o-mini`)
+- `ISSUE_OPENAI_MODEL` (legacy: `OPENAI_MODEL`, por defecto `gpt-5-mini`)
 - `ISSUE_OPENAI_STYLE_LAW` (ley/estilo para que escriba issues como tú)
 - `ISSUE_WEBHOOK_URL` (legacy: `HASS_WEBHOOK_URL_ISSUE`; por defecto reutiliza `WORKDAY_WEBHOOK_START_URL`)
 - `ISSUE_REPO_FRONTEND` / `ISSUE_BUG_PARENT_ISSUE_FRONTEND` (opcional; aliases legacy: `ISSUE_BUG_PARENT_REPO_FRONTEND`, `ISSUE_BUG_PARENT_REPO_FRONT`)
@@ -112,7 +112,7 @@ Campos obligatorios para que `issue_agent` pueda generar/rellenar issues:
 - `ANSWERS_DATA_DIR` (por defecto `/data/answers_agent`; persistencia de conversaciones/estado)
 - `ANSWERS_TELEGRAM_BOT_TOKEN` (legacy: `TELEGRAM_BOT_TOKEN`)
 - `ANSWERS_OPENAI_API_KEY` (legacy: `OPENAI_API_KEY`)
-- `ANSWERS_OPENAI_MODEL` (legacy: `OPENAI_MODEL`, por defecto `gpt-4o-mini`)
+- `ANSWERS_OPENAI_MODEL` (legacy: `OPENAI_MODEL`, por defecto `gpt-5-mini`)
 - `ANSWERS_REQUEST_TIMEOUT_SECONDS` (por defecto `30`)
 - `ANSWERS_WEBHOOK_SECRET` (legacy: `TELEGRAM_WEBHOOK_SECRET`; también acepta `telegram_wehbook_secret` en `options.json` por retrocompatibilidad)
 
@@ -124,7 +124,7 @@ Ejemplo mínimo para correo (IMAP):
   "email_imap_password": "tu-password-imap",
   "email_imap_host": "imap.example.com",
   "email_openai_api_key": "sk-...",
-  "email_openai_model": "gpt-4o-mini"
+  "email_openai_model": "gpt-5-mini"
 }
 ```
 
@@ -143,7 +143,7 @@ Ejemplo recomendado para correo (IMAP + SMTP + firma/CC):
   "email_default_cc": "ops@example.com, audit@example.com",
   "email_signature_assets_dir": "/config/media/signature",
   "email_openai_api_key": "sk-...",
-  "email_openai_model": "gpt-4o-mini"
+  "email_openai_model": "gpt-5-mini"
 }
 ```
 

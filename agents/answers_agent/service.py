@@ -45,7 +45,7 @@ class AnswersAgentService:
         self.data_dir = data_dir
         self.telegram_bot_token = str(telegram_bot_token or "").strip()
         self.openai_api_key = str(openai_api_key or "").strip()
-        self.openai_model = str(openai_model or "gpt-4o-mini").strip() or "gpt-4o-mini"
+        self.openai_model = str(openai_model or "gpt-5-mini").strip() or "gpt-5-mini"
         self.request_timeout_seconds = max(5, int(request_timeout_seconds or 30))
         self.telegram_webhook_secret = str(telegram_webhook_secret or "").strip()
         self.support_guidance = SupportGuidanceConfig(

@@ -19,7 +19,7 @@ Servidor FastAPI para recibir mensajes de Telegram y responder con API de ChatGP
 - `TELEGRAM_BOT_TOKEN`: token del bot.
 - `TELEGRAM_WEHBOOK_SECRET` (opcional, recomendado): secreto para validar `X-Telegram-Bot-Api-Secret-Token` en el webhook.
 - `OPENAI_API_KEY`: API key de OpenAI.
-- `OPENAI_MODEL` (opcional, default: `gpt-4o-mini`).
+- `OPENAI_MODEL` (opcional, default: `gpt-5-mini`).
 - `BOT_RESPONSE_DELAY_SECONDS` (opcional, default: `8`).
 - `REQUEST_TIMEOUT_SECONDS` (opcional, default: `30`).
 - `LOG_LEVEL` (opcional): usa `DEBUG` para ver trazas de diagnóstico del webhook en logs de HA.

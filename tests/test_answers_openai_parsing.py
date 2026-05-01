@@ -13,7 +13,7 @@ class AnswersOpenAIParsingTests(unittest.TestCase):
             data_dir=Path(self.tmpdir.name),
             telegram_bot_token="bot-token",
             openai_api_key="openai-key",
-            openai_model="gpt-4o-mini",
+            openai_model="gpt-5-mini",
         )
 
     def tearDown(self) -> None:

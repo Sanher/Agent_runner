@@ -72,7 +72,7 @@ class Settings:
         ),
     ).strip()
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-5-mini")
     bot_response_delay_seconds: int = int(os.getenv("BOT_RESPONSE_DELAY_SECONDS", "8"))
     request_timeout_seconds: int = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "30"))
     support_telegram_url: str = os.getenv("SUPPORT_TELEGRAM_URL", DEFAULT_SUPPORT_TELEGRAM_URL).strip()

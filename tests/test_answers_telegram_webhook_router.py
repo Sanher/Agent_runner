@@ -24,7 +24,7 @@ class AnswersTelegramWebhookRouterTests(unittest.TestCase):
             data_dir=self.data_dir,
             telegram_bot_token="bot-token",
             openai_api_key="",
-            openai_model="gpt-4o-mini",
+            openai_model="gpt-5-mini",
             telegram_webhook_secret="my-telegram-secret",
         )
         self.service._send_telegram_message = lambda chat_id, text, business_connection_id=None: 777

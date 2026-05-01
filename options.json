@@ -10,7 +10,7 @@
   "workday_webhook_stop_break_url": "https://example.invalid/webhook/stop-break",
 
   "email_openai_api_key": "sk-xxxx",
-  "email_openai_model": "gpt-4o-mini",
+  "email_openai_model": "gpt-5-mini",
   "email_imap_email": "usuario@example.com",
   "email_imap_password": "tu-password-imap",
   "email_imap_host": "imap.example.com",
@@ -34,7 +34,7 @@
   "issue_project_name": "",
   "issue_storage_state_path": "",
   "issue_openai_api_key": "sk-xxxx",
-  "issue_openai_model": "gpt-4o-mini",
+  "issue_openai_model": "gpt-5-mini",
   "issue_openai_style_law": "Escribe issues claras, accionables y con contexto técnico suficiente.",
   "issue_repo_frontend": "",
   "issue_repo_backend": "",
