@@ -580,6 +580,35 @@ class EmailAgentService:
             config=self.support_guidance,
         )
 
+    @staticmethod
+    def _uses_responses_api(model: str) -> bool:
+        return str(model or "").strip().lower().startswith("gpt-5")
+
+    @staticmethod
+    def _extract_responses_text(payload: Dict[str, Any]) -> str:
+        direct = str(payload.get("output_text") or "").strip()
+        if direct:
+            return direct
+
+        output = payload.get("output")
+        if not isinstance(output, list):
+            return ""
+
+        parts: List[str] = []
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content")
+            if not isinstance(content, list):
+                continue
+            for chunk in content:
+                if not isinstance(chunk, dict):
+                    continue
+                text = str(chunk.get("text") or "").strip()
+                if text:
+                    parts.append(text)
+        return "\n".join(parts).strip()
+
     def _generate_draft(
         self,
         email_item: Dict[str, Any],
@@ -624,28 +653,67 @@ class EmailAgentService:
             ],
         }
 
-        response = httpx.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.openai_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.openai_model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are an assistant that drafts suggested responses for email support teams.",
+        system_prompt = "You are an assistant that drafts suggested responses for email support teams."
+        user_prompt = json.dumps(payload, ensure_ascii=False)
+        headers = {
+            "Authorization": f"Bearer {self.openai_api_key}",
+            "Content-Type": "application/json",
+        }
+        use_responses_api = self._uses_responses_api(self.openai_model)
+        api_name = "responses" if use_responses_api else "chat_completions"
+        self._debug("Requesting draft from OpenAI", model=self.openai_model, api=api_name)
+
+        try:
+            if use_responses_api:
+                response = httpx.post(
+                    "https://api.openai.com/v1/responses",
+                    headers=headers,
+                    json={
+                        "model": self.openai_model,
+                        "input": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
                     },
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ],
-                "temperature": 0.3,
-            },
-            timeout=60,
-        )
-        response.raise_for_status()
-        data = response.json()
-        draft = data["choices"][0]["message"]["content"].strip()
+                    timeout=60,
+                )
+                response.raise_for_status()
+                draft = self._extract_responses_text(response.json())
+            else:
+                response = httpx.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers=headers,
+                    json={
+                        "model": self.openai_model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        "temperature": 0.3,
+                    },
+                    timeout=60,
+                )
+                response.raise_for_status()
+                data = response.json()
+                draft = data["choices"][0]["message"]["content"].strip()
+        except httpx.HTTPStatusError as err:
+            body_excerpt = ""
+            try:
+                body_excerpt = err.response.text[:500]
+            except Exception:
+                body_excerpt = ""
+            logger.error(
+                "[%s] OpenAI draft request failed | api=%s | model=%s | status=%s | body_excerpt=%s",
+                AGENT_NAME,
+                api_name,
+                self.openai_model,
+                getattr(err.response, "status_code", "unknown"),
+                body_excerpt,
+            )
+            raise
+
+        if not draft:
+            raise RuntimeError("OpenAI response did not include draft text")
         return self._sanitize_generated_draft(draft)
 
     def _notify_new_suggestion(self, suggestion: Dict[str, Any]) -> None:

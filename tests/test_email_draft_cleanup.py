@@ -7,11 +7,11 @@ from agents.email_agent.service import EmailAgentService
 
 
 class EmailDraftCleanupTests(unittest.TestCase):
-    def _build_service(self, data_dir: Path) -> EmailAgentService:
+    def _build_service(self, data_dir: Path, openai_model: str = "gpt-5-mini") -> EmailAgentService:
         return EmailAgentService(
             data_dir=data_dir,
             openai_api_key="sk-test",
-            openai_model="gpt-5-mini",
+            openai_model=openai_model,
             gmail_email="imap@example.com",
             gmail_app_password="imap-pass",
             gmail_imap_host="imap.example.com",
@@ -68,7 +68,60 @@ class EmailDraftCleanupTests(unittest.TestCase):
             "Reply body",
         )
 
-    def test_generate_draft_returns_body_without_subject_or_signature(self) -> None:
+    def test_extract_responses_text_from_nested_output(self) -> None:
+        payload = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "output_text", "text": "First line"},
+                        {"type": "output_text", "text": "Second line"},
+                    ],
+                }
+            ]
+        }
+
+        self.assertEqual(
+            EmailAgentService._extract_responses_text(payload),
+            "First line\nSecond line",
+        )
+
+    def test_generate_draft_uses_responses_api_for_gpt_5_mini(self) -> None:
+        class _FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return {
+                    "output_text": (
+                        "Subject: RE: Listing request\n\n"
+                        "Please share the contract address.\n\n"
+                        "Best regards,\n"
+                        "Support Team"
+                    )
+                }
+
+        with TemporaryDirectory() as tmpdir:
+            service = self._build_service(Path(tmpdir), openai_model="gpt-5-mini")
+            with patch("agents.email_agent.service.httpx.post", return_value=_FakeResponse()) as mock_post:
+                draft = service._generate_draft(
+                    {
+                        "id": "1",
+                        "from": "alerts@example.com",
+                        "subject": "Listing request",
+                        "date": "2026-03-14T10:00:00",
+                        "body": "Need help",
+                    },
+                    {"signature": "Best regards,\nSupport Team", "common_replies": []},
+                )
+
+        self.assertEqual(draft, "Please share the contract address.")
+        self.assertEqual(mock_post.call_args.args[0], "https://api.openai.com/v1/responses")
+        request_json = mock_post.call_args.kwargs["json"]
+        self.assertNotIn("temperature", request_json)
+        self.assertEqual(request_json["model"], "gpt-5-mini")
+
+    def test_generate_draft_keeps_chat_completions_for_gpt_4o(self) -> None:
         class _FakeResponse:
             def raise_for_status(self) -> None:
                 return None
@@ -82,7 +135,7 @@ class EmailDraftCleanupTests(unittest.TestCase):
                                     "Subject: RE: Listing request\n\n"
                                     "Please share the contract address.\n\n"
                                     "Best regards,\n"
-                                    "David"
+                                    "Support Team"
                                 )
                             }
                         }
@@ -90,8 +143,8 @@ class EmailDraftCleanupTests(unittest.TestCase):
                 }
 
         with TemporaryDirectory() as tmpdir:
-            service = self._build_service(Path(tmpdir))
-            with patch("agents.email_agent.service.httpx.post", return_value=_FakeResponse()):
+            service = self._build_service(Path(tmpdir), openai_model="gpt-4o")
+            with patch("agents.email_agent.service.httpx.post", return_value=_FakeResponse()) as mock_post:
                 draft = service._generate_draft(
                     {
                         "id": "1",
@@ -100,10 +153,14 @@ class EmailDraftCleanupTests(unittest.TestCase):
                         "date": "2026-03-14T10:00:00",
                         "body": "Need help",
                     },
-                    {"signature": "Best regards,\nDavid", "common_replies": []},
+                    {"signature": "Best regards,\nSupport Team", "common_replies": []},
                 )
 
         self.assertEqual(draft, "Please share the contract address.")
+        self.assertEqual(mock_post.call_args.args[0], "https://api.openai.com/v1/chat/completions")
+        request_json = mock_post.call_args.kwargs["json"]
+        self.assertEqual(request_json["temperature"], 0.3)
+        self.assertEqual(request_json["model"], "gpt-4o")
 
 
 if __name__ == "__main__":
