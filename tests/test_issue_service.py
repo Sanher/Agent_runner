@@ -890,6 +890,29 @@ class IssueServiceTests(unittest.TestCase):
 
             self.assertEqual(["https://docs.example.com/api"], urls)
 
+    def test_enrich_new_feature_from_links_omits_temperature_for_gpt_5(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            fake_response = Mock()
+            fake_response.raise_for_status.return_value = None
+            fake_response.json.return_value = {
+                "output_text": json.dumps({"info": "Verified info", "warnings": []})
+            }
+
+            with patch("agents.issue_agent.service.httpx.post", return_value=fake_response) as post:
+                result = svc._enrich_new_feature_from_links(
+                    user_input="Integrar https://docs.example.com/api",
+                    repo="management",
+                    urls=["https://docs.example.com/api"],
+                )
+
+            self.assertEqual("Verified info", result["fields"]["info"])
+            _, kwargs = post.call_args
+            self.assertEqual("https://api.openai.com/v1/responses", post.call_args.args[0])
+            self.assertEqual([{"type": "web_search_preview"}], kwargs["json"]["tools"])
+            self.assertNotIn("temperature", kwargs["json"])
+            self.assertEqual({"effort": "low"}, kwargs["json"]["reasoning"])
+
     def test_generate_issue_new_feature_applies_enriched_fields_and_warnings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             svc = self._build_service(Path(tmp))
@@ -1092,6 +1115,7 @@ class IssueServiceTests(unittest.TestCase):
             _, kwargs = post.call_args
             self.assertEqual("https://api.openai.com/v1/responses", post.call_args.args[0])
             self.assertNotIn("tools", kwargs["json"])
+            self.assertNotIn("temperature", kwargs["json"])
             self.assertIn("No internet browsing is allowed.", kwargs["json"]["instructions"])
             self.assertEqual({"effort": "low"}, kwargs["json"]["reasoning"])
 
@@ -1136,6 +1160,7 @@ class IssueServiceTests(unittest.TestCase):
             self.assertEqual("examplechain", result["title"])
             _, kwargs = post.call_args
             self.assertEqual([{"type": "web_search_preview"}], kwargs["json"]["tools"])
+            self.assertNotIn("temperature", kwargs["json"])
             self.assertNotIn("No internet browsing is allowed.", kwargs["json"]["instructions"])
 
     def test_submit_management_feature_refills_title_after_project_selection(self) -> None:

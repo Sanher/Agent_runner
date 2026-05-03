@@ -673,16 +673,17 @@ class IssueAgentService:
             "Authorization": f"Bearer {self.openai_api_key}",
             "Content-Type": "application/json",
         }
+        request_json: Dict[str, Any] = {
+            "model": self.openai_model,
+            "instructions": system_prompt,
+            "input": json.dumps(payload, ensure_ascii=False),
+            "tools": [{"type": "web_search_preview"}],
+        }
+        self._apply_responses_model_controls(request_json, temperature=0.1)
         response = httpx.post(
             "https://api.openai.com/v1/responses",
             headers=headers,
-            json={
-                "model": self.openai_model,
-                "instructions": system_prompt,
-                "input": json.dumps(payload, ensure_ascii=False),
-                "tools": [{"type": "web_search_preview"}],
-                "temperature": 0.1,
-            },
+            json=request_json,
             timeout=90,
         )
         response.raise_for_status()
@@ -794,6 +795,16 @@ class IssueAgentService:
                 if text:
                     chunks.append(text)
         return "\n".join(chunks).strip()
+
+    @staticmethod
+    def _uses_gpt_5_model(model: str) -> bool:
+        return str(model or "").strip().lower().startswith("gpt-5")
+
+    def _apply_responses_model_controls(self, request_json: Dict[str, Any], temperature: float) -> None:
+        if self._uses_gpt_5_model(self.openai_model):
+            request_json["reasoning"] = {"effort": "low"}
+            return
+        request_json["temperature"] = temperature
 
     def _call_openai_issue_writer(
         self,
@@ -934,12 +945,10 @@ class IssueAgentService:
             "model": self.openai_model,
             "instructions": system_prompt if use_browsing else system_prompt + " No internet browsing is allowed.",
             "input": json.dumps(payload, ensure_ascii=False),
-            "temperature": 0.2,
         }
         if use_browsing:
             request_json["tools"] = [{"type": "web_search_preview"}]
-        if str(self.openai_model or "").strip().lower().startswith("gpt-5"):
-            request_json["reasoning"] = {"effort": "low"}
+        self._apply_responses_model_controls(request_json, temperature=0.2)
 
         response = httpx.post(
             "https://api.openai.com/v1/responses",
