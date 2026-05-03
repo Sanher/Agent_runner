@@ -930,42 +930,27 @@ class IssueAgentService:
             "Authorization": f"Bearer {self.openai_api_key}",
             "Content-Type": "application/json",
         }
+        request_json: Dict[str, Any] = {
+            "model": self.openai_model,
+            "instructions": system_prompt if use_browsing else system_prompt + " No internet browsing is allowed.",
+            "input": json.dumps(payload, ensure_ascii=False),
+            "temperature": 0.2,
+        }
         if use_browsing:
-            response = httpx.post(
-                "https://api.openai.com/v1/responses",
-                headers=headers,
-                json={
-                    "model": self.openai_model,
-                    "instructions": system_prompt,
-                    "input": json.dumps(payload, ensure_ascii=False),
-                    "tools": [{"type": "web_search_preview"}],
-                    "temperature": 0.2,
-                },
-                timeout=90,
-            )
-            response.raise_for_status()
-            content = self._extract_responses_output_text(response.json())
-            if not content:
-                raise RuntimeError("OpenAI Responses API returned no text output")
-        else:
-            response = httpx.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers=headers,
-                json={
-                    "model": self.openai_model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": system_prompt + " No internet browsing is allowed.",
-                        },
-                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                    ],
-                    "temperature": 0.2,
-                },
-                timeout=60,
-            )
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
+            request_json["tools"] = [{"type": "web_search_preview"}]
+        if str(self.openai_model or "").strip().lower().startswith("gpt-5"):
+            request_json["reasoning"] = {"effort": "low"}
+
+        response = httpx.post(
+            "https://api.openai.com/v1/responses",
+            headers=headers,
+            json=request_json,
+            timeout=90 if use_browsing else 60,
+        )
+        response.raise_for_status()
+        content = self._extract_responses_output_text(response.json())
+        if not content:
+            raise RuntimeError("OpenAI Responses API returned no text output")
         parsed = self._extract_json_content(content)
         close_issue_raw = parsed.get("close_issue", False)
         close_issue = bool(close_issue_raw)

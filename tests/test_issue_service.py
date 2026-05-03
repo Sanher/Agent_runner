@@ -7,6 +7,7 @@ import types
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 
 def _load_issue_service():
@@ -1057,6 +1058,85 @@ class IssueServiceTests(unittest.TestCase):
             )
 
             self.assertEqual("LOCKS, AUDITS - inconsistency in aggregation", draft["title"])
+
+    def test_call_openai_issue_writer_uses_responses_without_browsing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            fake_response = Mock()
+            fake_response.raise_for_status.return_value = None
+            fake_response.json.return_value = {
+                "output_text": json.dumps(
+                    {
+                        "title": "LOCKS - review aggregation",
+                        "description": "desc",
+                        "steps_to_reproduce": "steps",
+                        "comment": "",
+                        "close_issue": False,
+                        "warnings": {"source": [], "user": []},
+                    }
+                )
+            }
+
+            with patch("agents.issue_agent.service.httpx.post", return_value=fake_response) as post:
+                result = svc._call_openai_issue_writer(
+                    user_input="review locks",
+                    include_comment=False,
+                    issue_type="bug",
+                    repo="backend",
+                    unit="core",
+                    comment_issue_number="",
+                    is_new_feature=False,
+                )
+
+            self.assertEqual("LOCKS - review aggregation", result["title"])
+            _, kwargs = post.call_args
+            self.assertEqual("https://api.openai.com/v1/responses", post.call_args.args[0])
+            self.assertNotIn("tools", kwargs["json"])
+            self.assertIn("No internet browsing is allowed.", kwargs["json"]["instructions"])
+            self.assertEqual({"effort": "low"}, kwargs["json"]["reasoning"])
+
+    def test_call_openai_issue_writer_adds_web_search_when_browsing_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            fake_response = Mock()
+            fake_response.raise_for_status.return_value = None
+            fake_response.json.return_value = {
+                "output": [
+                    {
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": json.dumps(
+                                    {
+                                        "title": "examplechain",
+                                        "description": "desc",
+                                        "steps_to_reproduce": "",
+                                        "comment": "",
+                                        "close_issue": False,
+                                        "warnings": {"source": [], "user": []},
+                                    }
+                                ),
+                            }
+                        ]
+                    }
+                ]
+            }
+
+            with patch("agents.issue_agent.service.httpx.post", return_value=fake_response) as post:
+                result = svc._call_openai_issue_writer(
+                    user_input="ExampleChain",
+                    include_comment=False,
+                    issue_type="blockchain",
+                    repo="backend",
+                    unit="core",
+                    comment_issue_number="",
+                    is_new_feature=False,
+                )
+
+            self.assertEqual("examplechain", result["title"])
+            _, kwargs = post.call_args
+            self.assertEqual([{"type": "web_search_preview"}], kwargs["json"]["tools"])
+            self.assertNotIn("No internet browsing is allowed.", kwargs["json"]["instructions"])
 
     def test_submit_management_feature_refills_title_after_project_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
