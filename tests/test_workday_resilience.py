@@ -131,6 +131,9 @@ class WorkdayResilienceTests(unittest.TestCase):
             "stop_break_ts": 6.0,
             "planned_final_ts": 7.0,
             "final_click_ts": 8.0,
+            "workday_duration_mode": "normal",
+            "final_click_min_delay_seconds": 27840,
+            "final_click_max_delay_seconds": 27960,
             "other": "x",
         }
         extracted = WorkdayAgentService._runtime_resume_fields(source)
@@ -143,8 +146,12 @@ class WorkdayResilienceTests(unittest.TestCase):
             "stop_break_ts",
             "planned_final_ts",
             "final_click_ts",
+            "workday_duration_mode",
+            "final_click_min_delay_seconds",
+            "final_click_max_delay_seconds",
         })
         self.assertEqual(extracted["first_click_ts"], 2.0)
+        self.assertEqual(extracted["workday_duration_mode"], "normal")
 
     def test_retry_failed_action_infers_missing_timestamps_from_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

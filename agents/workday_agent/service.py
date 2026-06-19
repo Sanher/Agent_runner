@@ -309,6 +309,9 @@ class WorkdayAgentService:
             "stop_break_ts",
             "planned_final_ts",
             "final_click_ts",
+            "workday_duration_mode",
+            "final_click_min_delay_seconds",
+            "final_click_max_delay_seconds",
         )
         return {key: state.get(key) for key in keys}
 
@@ -544,7 +547,10 @@ class WorkdayAgentService:
         planned_stop_break_ts: float = 0.0,
         planned_final_ts: float = 0.0,
         stop_break_base_ts: float = 0.0,
-    ) -> Dict[str, float]:
+        workday_duration_mode: str = "",
+        final_click_min_delay_seconds: float = 0.0,
+        final_click_max_delay_seconds: float = 0.0,
+    ) -> Dict[str, Any]:
         start_ts = self._safe_float(planned_start_break_ts)
         stop_ts = self._safe_float(planned_stop_break_ts)
         final_ts = self._safe_float(planned_final_ts)
@@ -560,7 +566,20 @@ class WorkdayAgentService:
             stop_max = stop_base + (15 * 60) + 59
             stop_ts = random.uniform(stop_min, stop_max)
 
-        min_delay_seconds, max_delay_seconds = self._final_click_delay_bounds_for_timestamp(first_click_ts)
+        duration_mode = self._normalize_workday_duration_mode(workday_duration_mode)
+        min_delay_seconds = int(self._safe_float(final_click_min_delay_seconds))
+        max_delay_seconds = int(self._safe_float(final_click_max_delay_seconds))
+        if min_delay_seconds <= 0 or max_delay_seconds < min_delay_seconds:
+            if not duration_mode:
+                duration_mode = self._workday_duration_mode_for_timestamp(first_click_ts)
+            min_delay_seconds, max_delay_seconds = self._final_click_delay_bounds_for_duration_mode(
+                duration_mode
+            )
+        elif not duration_mode:
+            duration_mode = self._workday_duration_mode_for_delay_bounds(
+                min_delay_seconds,
+                max_delay_seconds,
+            )
         min_final_ts = self._minimum_final_click_ts(first_click_ts)
         duration_min_ts = first_click_ts + min_delay_seconds
         duration_max_ts = first_click_ts + max_delay_seconds
@@ -585,6 +604,9 @@ class WorkdayAgentService:
             "planned_start_break_ts": start_ts,
             "planned_stop_break_ts": stop_ts,
             "planned_final_ts": final_ts,
+            "workday_duration_mode": duration_mode,
+            "final_click_min_delay_seconds": min_delay_seconds,
+            "final_click_max_delay_seconds": max_delay_seconds,
         }
 
     @classmethod
@@ -611,12 +633,55 @@ class WorkdayAgentService:
             )
         return cls.FINAL_CLICK_MIN_DELAY_SECONDS, cls.FINAL_CLICK_MAX_DELAY_SECONDS
 
+    @classmethod
+    def _normalize_workday_duration_mode(cls, value: Any) -> str:
+        mode = str(value or "").strip().lower()
+        return mode if mode in {"normal", "reduced"} else ""
+
+    @classmethod
+    def _final_click_delay_bounds_for_duration_mode(cls, mode: str) -> Tuple[int, int]:
+        return cls._final_click_delay_bounds_for_mode(mode == "reduced")
+
+    @classmethod
+    def _workday_duration_mode_for_delay_bounds(cls, min_delay_seconds: int, max_delay_seconds: int) -> str:
+        if (
+            int(min_delay_seconds) == cls.REDUCED_FINAL_CLICK_MIN_DELAY_SECONDS
+            and int(max_delay_seconds) == cls.REDUCED_FINAL_CLICK_MAX_DELAY_SECONDS
+        ):
+            return "reduced"
+        return "normal"
+
+    @staticmethod
+    def _planned_duration_kwargs_from_state(state: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "workday_duration_mode": state.get("workday_duration_mode", ""),
+            "final_click_min_delay_seconds": state.get("final_click_min_delay_seconds", 0),
+            "final_click_max_delay_seconds": state.get("final_click_max_delay_seconds", 0),
+        }
+
+    @staticmethod
+    def _planned_runtime_fields(plans: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "workday_duration_mode": plans.get("workday_duration_mode", ""),
+            "final_click_min_delay_seconds": plans.get("final_click_min_delay_seconds", 0),
+            "final_click_max_delay_seconds": plans.get("final_click_max_delay_seconds", 0),
+        }
+
+    def _workday_duration_mode_for_day(self, day_iso: str) -> str:
+        return "reduced" if self.is_reduced_workday_for_day(day_iso) else "normal"
+
     def _final_click_delay_bounds_for_day(self, day_iso: str) -> Tuple[int, int]:
-        return self._final_click_delay_bounds_for_mode(self.is_reduced_workday_for_day(day_iso))
+        return self._final_click_delay_bounds_for_duration_mode(
+            self._workday_duration_mode_for_day(day_iso)
+        )
 
     def _final_click_delay_bounds_for_timestamp(self, first_click_ts: float) -> Tuple[int, int]:
         first_click_day = datetime.fromtimestamp(first_click_ts).date().isoformat()
         return self._final_click_delay_bounds_for_day(first_click_day)
+
+    def _workday_duration_mode_for_timestamp(self, first_click_ts: float) -> str:
+        first_click_day = datetime.fromtimestamp(first_click_ts).date().isoformat()
+        return self._workday_duration_mode_for_day(first_click_day)
 
     def _minimum_first_click_dt_for_final_day(self, reference_dt: datetime) -> datetime:
         _, max_delay_seconds = self._final_click_delay_bounds_for_day(reference_dt.date().isoformat())
@@ -800,6 +865,9 @@ class WorkdayAgentService:
             planned_stop_break_ts=state.get("planned_stop_break_ts"),
             stop_break_ts=stop_break_ts,
             planned_final_ts=state.get("planned_final_ts"),
+            workday_duration_mode=state.get("workday_duration_mode", ""),
+            final_click_min_delay_seconds=state.get("final_click_min_delay_seconds", 0),
+            final_click_max_delay_seconds=state.get("final_click_max_delay_seconds", 0),
             retry_requested_at=datetime.now().isoformat(),
         )
         return self.resume_pending_flow()
@@ -1422,6 +1490,7 @@ class WorkdayAgentService:
                         planned_start_break_ts=self._safe_float(state.get("planned_start_break_ts")),
                         planned_stop_break_ts=self._safe_float(state.get("planned_stop_break_ts")),
                         planned_final_ts=self._safe_float(state.get("planned_final_ts")),
+                        **self._planned_duration_kwargs_from_state(state),
                     )
                     self._set_runtime_state(
                         "working_before_break",
@@ -1433,6 +1502,7 @@ class WorkdayAgentService:
                         planned_start_break_ts=plans["planned_start_break_ts"],
                         planned_stop_break_ts=plans["planned_stop_break_ts"],
                         planned_final_ts=plans["planned_final_ts"],
+                        **self._planned_runtime_fields(plans),
                     )
                     phase = "working_before_break"
 
@@ -1445,6 +1515,7 @@ class WorkdayAgentService:
                         planned_start_break_ts=self._safe_float(latest_state.get("planned_start_break_ts")),
                         planned_stop_break_ts=self._safe_float(latest_state.get("planned_stop_break_ts")),
                         planned_final_ts=self._safe_float(latest_state.get("planned_final_ts")),
+                        **self._planned_duration_kwargs_from_state(latest_state),
                     )
                     second_click_ts = plans["planned_start_break_ts"]
                     self._sleep_until(second_click_ts)
@@ -1465,6 +1536,7 @@ class WorkdayAgentService:
                                 planned_start_break_ts=plans["planned_start_break_ts"],
                                 planned_stop_break_ts=0.0,
                                 planned_final_ts=plans["planned_final_ts"],
+                                **self._planned_runtime_fields(plans),
                                 manual_state_detected=True,
                             )
                             self._append_runtime_event(
@@ -1498,6 +1570,7 @@ class WorkdayAgentService:
                             planned_start_break_ts=plans["planned_start_break_ts"],
                             planned_stop_break_ts=plans["planned_stop_break_ts"],
                             planned_final_ts=plans["planned_final_ts"],
+                            **self._planned_runtime_fields(plans),
                             manual_state_detected=True,
                         )
                         phase = "on_break"
@@ -1546,6 +1619,7 @@ class WorkdayAgentService:
                             start_break_ts=start_break_ts,
                             planned_stop_break_ts=plans["planned_stop_break_ts"],
                             planned_final_ts=plans["planned_final_ts"],
+                            **self._planned_runtime_fields(plans),
                         )
                         phase = "on_break"
 
@@ -1559,6 +1633,7 @@ class WorkdayAgentService:
                         planned_stop_break_ts=self._safe_float(latest_state.get("planned_stop_break_ts")),
                         planned_final_ts=self._safe_float(latest_state.get("planned_final_ts")),
                         stop_break_base_ts=start_break_ts,
+                        **self._planned_duration_kwargs_from_state(latest_state),
                     )
                     third_click_ts = plans["planned_stop_break_ts"]
                     self._sleep_until(third_click_ts)
@@ -1601,6 +1676,7 @@ class WorkdayAgentService:
                         start_break_ts=start_break_ts,
                         stop_break_ts=stop_break_ts,
                         planned_final_ts=plans["planned_final_ts"],
+                        **self._planned_runtime_fields(plans),
                     )
                     phase = "working_after_break"
 
@@ -1614,6 +1690,7 @@ class WorkdayAgentService:
                         planned_stop_break_ts=self._safe_float(latest_state.get("planned_stop_break_ts")),
                         planned_final_ts=self._safe_float(latest_state.get("planned_final_ts")),
                         stop_break_base_ts=start_break_ts,
+                        **self._planned_duration_kwargs_from_state(latest_state),
                     )
                     final_ts = plans["planned_final_ts"]
                     self._sleep_until(final_ts)
@@ -1645,6 +1722,7 @@ class WorkdayAgentService:
                         stop_break_ts=stop_break_ts,
                         planned_final_ts=final_ts,
                         final_click_ts=final_click_ts,
+                        **self._planned_runtime_fields(plans),
                     )
                     self.send_final(job_name, run_id, result)
                     self._append_runtime_event(
@@ -1859,6 +1937,7 @@ class WorkdayAgentService:
                 first_click_ts = time.time()
 
                 plans = self._build_planned_clicks(first_click_ts=first_click_ts)
+                plan_runtime_fields = self._planned_runtime_fields(plans)
                 second_click_ts = plans["planned_start_break_ts"]
                 third_click_ts = plans["planned_stop_break_ts"]
                 final_ts = plans["planned_final_ts"]
@@ -1884,6 +1963,7 @@ class WorkdayAgentService:
                     planned_start_break_ts=second_click_ts,
                     planned_stop_break_ts=third_click_ts,
                     planned_final_ts=final_ts,
+                    **plan_runtime_fields,
                 )
                 self._sleep_until(second_click_ts)
                 page.reload(wait_until="domcontentloaded", timeout=60_000)
@@ -1933,6 +2013,7 @@ class WorkdayAgentService:
                     start_break_ts=start_break_ts,
                     planned_stop_break_ts=third_click_ts,
                     planned_final_ts=final_ts,
+                    **plan_runtime_fields,
                 )
                 self._sleep_until(third_click_ts)
                 page.reload(wait_until="domcontentloaded", timeout=60_000)
@@ -1985,6 +2066,7 @@ class WorkdayAgentService:
                     start_break_ts=start_break_ts,
                     stop_break_ts=stop_break_ts,
                     planned_final_ts=final_ts,
+                    **plan_runtime_fields,
                 )
                 self._sleep_until(final_ts)
                 page.reload(wait_until="domcontentloaded", timeout=60_000)
@@ -2017,6 +2099,7 @@ class WorkdayAgentService:
                     stop_break_ts=stop_break_ts,
                     planned_final_ts=final_ts,
                     final_click_ts=final_click_ts,
+                    **plan_runtime_fields,
                 )
                 self.send_final(job_name, run_id, result)
                 self._debug("Run completed OK", job_name=job_name, run_id=run_id)

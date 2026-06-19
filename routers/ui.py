@@ -3253,6 +3253,8 @@ let workdayPollTimer = null;
 let workdayTickerTimer = null;
 let workdayTickerAlignTimer = null;
 let workdayTickerSnapshot = null;
+let workdaySavedReducedStartDate = '';
+let workdaySavedReducedEndDate = '';
 let answersArchivedVisible = false;
 let emailReviewedVisible = false;
 let statusDismissTimer = null;
@@ -3549,6 +3551,8 @@ function syncWorkdaySettingsUi(blockedStart, blockedEnd, reducedStart, reducedEn
   document.getElementById('workdayBlockedEndDate').value = cleanBlockedEnd;
   document.getElementById('workdayReducedStartDate').value = cleanReducedStart;
   document.getElementById('workdayReducedEndDate').value = cleanReducedEnd;
+  workdaySavedReducedStartDate = cleanReducedStart;
+  workdaySavedReducedEndDate = cleanReducedEnd;
   const clearBtn = document.getElementById('workdayClearSettingsBtn');
   if (clearBtn) clearBtn.disabled = !(cleanBlockedStart && cleanBlockedEnd);
 }
@@ -3659,8 +3663,8 @@ async function clearWorkdaySettings() {
   const oldText = btn.innerText;
   const oldConfirmText = confirmBtn.innerText;
   const statusBox = document.getElementById('workdaySettingsStatus');
-  const reducedStart = String(document.getElementById('workdayReducedStartDate').value || '').trim();
-  const reducedEnd = String(document.getElementById('workdayReducedEndDate').value || '').trim();
+  const reducedStart = workdaySavedReducedStartDate;
+  const reducedEnd = workdaySavedReducedEndDate;
 
   btn.disabled = true;
   btn.innerText = 'Clearing...';

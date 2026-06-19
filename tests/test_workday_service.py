@@ -239,6 +239,7 @@ class WorkdayServiceTests(unittest.TestCase):
 
             self.assertGreaterEqual(final_ts, first_click + (7 * 3600) + (14 * 60))
             self.assertLessEqual(final_ts, first_click + (7 * 3600) + (16 * 60))
+            self.assertEqual(planned["workday_duration_mode"], "reduced")
 
     def test_reduced_workday_first_click_starts_late_enough_for_local_15(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -253,6 +254,32 @@ class WorkdayServiceTests(unittest.TestCase):
 
             self.assertEqual(first_click.hour, 7)
             self.assertEqual(first_click.minute, 44)
+
+    def test_rebuild_keeps_persisted_duration_bounds_after_settings_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            workday = date.today() + timedelta(days=1)
+            workday_text = workday.isoformat()
+            first_click = datetime(workday.year, workday.month, workday.day, 8, 0, 0).timestamp()
+            persisted_final = first_click + (7 * 3600) + (45 * 60)
+
+            normal_plan = svc._build_planned_clicks(
+                first_click_ts=first_click,
+                planned_final_ts=persisted_final,
+            )
+            self.assertEqual(normal_plan["workday_duration_mode"], "normal")
+
+            svc.update_settings("", "", workday_text, workday_text)
+            rebuilt = svc._build_planned_clicks(
+                first_click_ts=first_click,
+                planned_final_ts=normal_plan["planned_final_ts"],
+                workday_duration_mode=normal_plan["workday_duration_mode"],
+                final_click_min_delay_seconds=normal_plan["final_click_min_delay_seconds"],
+                final_click_max_delay_seconds=normal_plan["final_click_max_delay_seconds"],
+            )
+
+            self.assertEqual(rebuilt["workday_duration_mode"], "normal")
+            self.assertEqual(rebuilt["planned_final_ts"], persisted_final)
 
     def test_is_playwright_executable_error(self) -> None:
         err = RuntimeError("BrowserType.launch: Executable doesn't exist at /ms-playwright/chromium")
