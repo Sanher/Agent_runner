@@ -20,6 +20,8 @@ class RunRequest(BaseModel):
 class WorkdaySettingsRequest(BaseModel):
     blocked_start_date: str = ""
     blocked_end_date: str = ""
+    reduced_start_date: str = ""
+    reduced_end_date: str = ""
 
 
 def create_workday_router(
@@ -82,10 +84,15 @@ def create_workday_router(
 
     @router.post("/settings")
     def update_settings(req: WorkdaySettingsRequest, request: Request):
-        """Updates blocked date range for automatic start."""
+        """Updates scheduler date ranges for automatic start and reduced workdays."""
         ensure_auth(request)
         try:
-            updated = service.update_settings(req.blocked_start_date, req.blocked_end_date)
+            updated = service.update_settings(
+                req.blocked_start_date,
+                req.blocked_end_date,
+                req.reduced_start_date,
+                req.reduced_end_date,
+            )
         except RuntimeError as err:
             raise HTTPException(status_code=400, detail=str(err)) from err
         return {"ok": True, "settings": updated}

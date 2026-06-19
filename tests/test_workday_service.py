@@ -93,16 +93,25 @@ class WorkdayServiceTests(unittest.TestCase):
             blocked_day = (today + timedelta(days=2)).isoformat()
             end = (today + timedelta(days=3)).isoformat()
             unblocked_day = (today + timedelta(days=5)).isoformat()
+            reduced_start = (today + timedelta(days=6)).isoformat()
+            reduced_day = (today + timedelta(days=7)).isoformat()
+            reduced_end = (today + timedelta(days=8)).isoformat()
 
-            updated = svc.update_settings(start, end)
+            updated = svc.update_settings(start, end, reduced_start, reduced_end)
             self.assertEqual(updated["blocked_start_date"], start)
             self.assertEqual(updated["blocked_end_date"], end)
+            self.assertEqual(updated["reduced_start_date"], reduced_start)
+            self.assertEqual(updated["reduced_end_date"], reduced_end)
             self.assertTrue(svc.is_automatic_start_blocked_for_day(blocked_day))
             self.assertFalse(svc.is_automatic_start_blocked_for_day(unblocked_day))
+            self.assertTrue(svc.is_reduced_workday_for_day(reduced_day))
+            self.assertFalse(svc.is_reduced_workday_for_day(unblocked_day))
 
             reloaded = self._build_service(base)
             self.assertEqual(reloaded.get_settings()["blocked_start_date"], start)
             self.assertEqual(reloaded.get_settings()["blocked_end_date"], end)
+            self.assertEqual(reloaded.get_settings()["reduced_start_date"], reduced_start)
+            self.assertEqual(reloaded.get_settings()["reduced_end_date"], reduced_end)
 
     def test_build_planned_clicks_uses_given_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -140,11 +149,13 @@ class WorkdayServiceTests(unittest.TestCase):
             self.assertLessEqual(final_ts, first_click + (7 * 3600) + (46 * 60))
 
     def test_minimum_first_click_preserves_final_duration_after_local_15(self) -> None:
-        first_click = WorkdayAgentService._minimum_first_click_dt_for_final_day(
-            datetime(2026, 4, 27, 12, 0, 0)
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            first_click = svc._minimum_first_click_dt_for_final_day(
+                datetime(2026, 4, 27, 12, 0, 0)
+            )
 
-        self.assertEqual(first_click, datetime(2026, 4, 27, 7, 14, 0))
+            self.assertEqual(first_click, datetime(2026, 4, 27, 7, 14, 0))
 
     def test_first_click_window_starts_late_enough_for_local_15(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -207,6 +218,41 @@ class WorkdayServiceTests(unittest.TestCase):
             )
 
             self.assertEqual(planned["planned_final_ts"], max_final)
+
+    def test_reduced_workday_uses_shorter_final_duration_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            reduced_day = date.today() + timedelta(days=1)
+            reduced_day_text = reduced_day.isoformat()
+            svc.update_settings("", "", reduced_day_text, reduced_day_text)
+            first_click = datetime(
+                reduced_day.year,
+                reduced_day.month,
+                reduced_day.day,
+                8,
+                0,
+                0,
+            ).timestamp()
+
+            planned = svc._build_planned_clicks(first_click_ts=first_click)
+            final_ts = planned["planned_final_ts"]
+
+            self.assertGreaterEqual(final_ts, first_click + (7 * 3600) + (14 * 60))
+            self.assertLessEqual(final_ts, first_click + (7 * 3600) + (16 * 60))
+
+    def test_reduced_workday_first_click_starts_late_enough_for_local_15(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            reduced_day = date.today() + timedelta(days=1)
+            reduced_day_text = reduced_day.isoformat()
+            svc.update_settings("", "", reduced_day_text, reduced_day_text)
+
+            first_click = svc._minimum_first_click_dt_for_final_day(
+                datetime(reduced_day.year, reduced_day.month, reduced_day.day, 12, 0, 0)
+            )
+
+            self.assertEqual(first_click.hour, 7)
+            self.assertEqual(first_click.minute, 44)
 
     def test_is_playwright_executable_error(self) -> None:
         err = RuntimeError("BrowserType.launch: Executable doesn't exist at /ms-playwright/chromium")

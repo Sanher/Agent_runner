@@ -7,7 +7,7 @@ import time
 from datetime import date, datetime
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -22,8 +22,22 @@ class WorkdayAgentService:
     ACTIVE_PHASES = {"waiting_start", "working_before_break", "on_break", "working_after_break"}
     FINAL_CLICK_MIN_HOUR = 15
     FINAL_CLICK_MIN_MINUTE = 0
-    FINAL_CLICK_MIN_DELAY_SECONDS = (7 * 3600) + (44 * 60)
-    FINAL_CLICK_MAX_DELAY_SECONDS = (7 * 3600) + (46 * 60)
+    FINAL_CLICK_RANDOM_MARGIN_SECONDS = 60
+    NORMAL_WORK_DURATION_SECONDS = (7 * 3600) + (30 * 60)
+    REDUCED_WORK_DURATION_SECONDS = 7 * 3600
+    BREAK_DURATION_SECONDS = 15 * 60
+    FINAL_CLICK_MIN_DELAY_SECONDS = (
+        NORMAL_WORK_DURATION_SECONDS + BREAK_DURATION_SECONDS - FINAL_CLICK_RANDOM_MARGIN_SECONDS
+    )
+    FINAL_CLICK_MAX_DELAY_SECONDS = (
+        NORMAL_WORK_DURATION_SECONDS + BREAK_DURATION_SECONDS + FINAL_CLICK_RANDOM_MARGIN_SECONDS
+    )
+    REDUCED_FINAL_CLICK_MIN_DELAY_SECONDS = (
+        REDUCED_WORK_DURATION_SECONDS + BREAK_DURATION_SECONDS - FINAL_CLICK_RANDOM_MARGIN_SECONDS
+    )
+    REDUCED_FINAL_CLICK_MAX_DELAY_SECONDS = (
+        REDUCED_WORK_DURATION_SECONDS + BREAK_DURATION_SECONDS + FINAL_CLICK_RANDOM_MARGIN_SECONDS
+    )
 
     def __init__(
         self,
@@ -313,8 +327,17 @@ class WorkdayAgentService:
         except ValueError as exc:
             raise RuntimeError("Invalid date format. Use YYYY-MM-DD") from exc
 
+    @staticmethod
+    def _default_settings() -> Dict[str, str]:
+        return {
+            "blocked_start_date": "",
+            "blocked_end_date": "",
+            "reduced_start_date": "",
+            "reduced_end_date": "",
+        }
+
     def _load_settings(self) -> Dict[str, str]:
-        default_settings = {"blocked_start_date": "", "blocked_end_date": ""}
+        default_settings = self._default_settings()
         if not self.config_path.exists():
             return default_settings
         try:
@@ -323,6 +346,8 @@ class WorkdayAgentService:
                 return default_settings
             blocked_start_date = self._normalize_iso_date(raw.get("blocked_start_date", ""))
             blocked_end_date = self._normalize_iso_date(raw.get("blocked_end_date", ""))
+            reduced_start_date = self._normalize_iso_date(raw.get("reduced_start_date", ""))
+            reduced_end_date = self._normalize_iso_date(raw.get("reduced_end_date", ""))
             if bool(blocked_start_date) != bool(blocked_end_date):
                 self.logger.warning(
                     "Incomplete workday configuration: blocked_start_date and blocked_end_date must be set together"
@@ -331,9 +356,19 @@ class WorkdayAgentService:
             if blocked_start_date and blocked_end_date and blocked_start_date > blocked_end_date:
                 self.logger.warning("Invalid workday configuration: blocked_start_date > blocked_end_date")
                 return default_settings
+            if bool(reduced_start_date) != bool(reduced_end_date):
+                self.logger.warning(
+                    "Incomplete workday configuration: reduced_start_date and reduced_end_date must be set together"
+                )
+                return default_settings
+            if reduced_start_date and reduced_end_date and reduced_start_date > reduced_end_date:
+                self.logger.warning("Invalid workday configuration: reduced_start_date > reduced_end_date")
+                return default_settings
             return {
                 "blocked_start_date": blocked_start_date,
                 "blocked_end_date": blocked_end_date,
+                "reduced_start_date": reduced_start_date,
+                "reduced_end_date": reduced_end_date,
             }
         except Exception:
             self.logger.exception("Failed to load editable workday configuration")
@@ -349,40 +384,79 @@ class WorkdayAgentService:
         except Exception as exc:
             raise RuntimeError("Failed to save workday configuration") from exc
 
-    def _clear_expired_blocked_range(self, settings: Dict[str, str]) -> Dict[str, str]:
-        start = str(settings.get("blocked_start_date", "") or "").strip()
-        end = str(settings.get("blocked_end_date", "") or "").strip()
+    def _clear_expired_date_range(
+        self,
+        settings: Dict[str, str],
+        *,
+        start_key: str,
+        end_key: str,
+        label: str,
+    ) -> Dict[str, str]:
+        updated = {**self._default_settings(), **dict(settings)}
+        start = str(updated.get(start_key, "") or "").strip()
+        end = str(updated.get(end_key, "") or "").strip()
         today = date.today().isoformat()
         if not start or not end or end >= today:
-            return dict(settings)
+            return updated
         self.logger.info(
-            "Expired blocked range cleared automatically previous_start=%s previous_end=%s today=%s",
+            "Expired %s range cleared automatically previous_start=%s previous_end=%s today=%s",
+            label,
             start,
             end,
             today,
         )
-        return {"blocked_start_date": "", "blocked_end_date": ""}
+        updated[start_key] = ""
+        updated[end_key] = ""
+        return updated
+
+    def _clear_expired_settings_ranges(self, settings: Dict[str, str]) -> Dict[str, str]:
+        updated = self._clear_expired_date_range(
+            settings,
+            start_key="blocked_start_date",
+            end_key="blocked_end_date",
+            label="blocked",
+        )
+        return self._clear_expired_date_range(
+            updated,
+            start_key="reduced_start_date",
+            end_key="reduced_end_date",
+            label="reduced workday",
+        )
 
     def get_settings(self) -> Dict[str, str]:
         with self._config_lock:
-            normalized = self._clear_expired_blocked_range(self._settings)
+            normalized = self._clear_expired_settings_ranges(self._settings)
             if normalized != self._settings:
                 self._persist_settings(normalized)
                 self._settings = dict(normalized)
             return dict(self._settings)
 
-    def update_settings(self, blocked_start_date: str, blocked_end_date: str) -> Dict[str, str]:
-        start = self._normalize_iso_date(blocked_start_date)
-        end = self._normalize_iso_date(blocked_end_date)
-        if bool(start) != bool(end):
-            raise RuntimeError("You must provide both dates: start and end")
-        if start and end and start > end:
-            raise RuntimeError("Start date cannot be later than end date")
+    def update_settings(
+        self,
+        blocked_start_date: str,
+        blocked_end_date: str,
+        reduced_start_date: str = "",
+        reduced_end_date: str = "",
+    ) -> Dict[str, str]:
+        blocked_start = self._normalize_iso_date(blocked_start_date)
+        blocked_end = self._normalize_iso_date(blocked_end_date)
+        reduced_start = self._normalize_iso_date(reduced_start_date)
+        reduced_end = self._normalize_iso_date(reduced_end_date)
+        if bool(blocked_start) != bool(blocked_end):
+            raise RuntimeError("You must provide both blocked dates: start and end")
+        if bool(reduced_start) != bool(reduced_end):
+            raise RuntimeError("You must provide both reduced workday dates: start and end")
+        if blocked_start and blocked_end and blocked_start > blocked_end:
+            raise RuntimeError("Blocked start date cannot be later than end date")
+        if reduced_start and reduced_end and reduced_start > reduced_end:
+            raise RuntimeError("Reduced workday start date cannot be later than end date")
         updated = {
-            "blocked_start_date": start,
-            "blocked_end_date": end,
+            "blocked_start_date": blocked_start,
+            "blocked_end_date": blocked_end,
+            "reduced_start_date": reduced_start,
+            "reduced_end_date": reduced_end,
         }
-        updated = self._clear_expired_blocked_range(updated)
+        updated = self._clear_expired_settings_ranges(updated)
         with self._config_lock:
             self._persist_settings(updated)
             self._settings = dict(updated)
@@ -390,6 +464,8 @@ class WorkdayAgentService:
             "Workday configuration updated",
             blocked_start_date=updated["blocked_start_date"],
             blocked_end_date=updated["blocked_end_date"],
+            reduced_start_date=updated["reduced_start_date"],
+            reduced_end_date=updated["reduced_end_date"],
         )
         return dict(updated)
 
@@ -401,6 +477,16 @@ class WorkdayAgentService:
         settings = self.get_settings()
         start = settings.get("blocked_start_date", "")
         end = settings.get("blocked_end_date", "")
+        return bool(start and end and start <= day <= end)
+
+    def is_reduced_workday_for_day(self, day_iso: str) -> bool:
+        try:
+            day = date.fromisoformat(str(day_iso)).isoformat()
+        except Exception:
+            return False
+        settings = self.get_settings()
+        start = settings.get("reduced_start_date", "")
+        end = settings.get("reduced_end_date", "")
         return bool(start and end and start <= day <= end)
 
     def _ensure_playwright_browsers(self, run_id: str, job_name: str) -> bool:
@@ -474,9 +560,10 @@ class WorkdayAgentService:
             stop_max = stop_base + (15 * 60) + 59
             stop_ts = random.uniform(stop_min, stop_max)
 
+        min_delay_seconds, max_delay_seconds = self._final_click_delay_bounds_for_timestamp(first_click_ts)
         min_final_ts = self._minimum_final_click_ts(first_click_ts)
-        duration_min_ts = first_click_ts + self.FINAL_CLICK_MIN_DELAY_SECONDS
-        duration_max_ts = first_click_ts + self.FINAL_CLICK_MAX_DELAY_SECONDS
+        duration_min_ts = first_click_ts + min_delay_seconds
+        duration_max_ts = first_click_ts + max_delay_seconds
         final_earliest = max(duration_min_ts, min_final_ts)
         final_latest = duration_max_ts
         if final_earliest > final_latest:
@@ -516,9 +603,25 @@ class WorkdayAgentService:
         )
 
     @classmethod
-    def _minimum_first_click_dt_for_final_day(cls, reference_dt: datetime) -> datetime:
-        return cls._minimum_final_click_dt_for_day(reference_dt) - timedelta(
-            seconds=cls.FINAL_CLICK_MAX_DELAY_SECONDS
+    def _final_click_delay_bounds_for_mode(cls, reduced_workday: bool) -> Tuple[int, int]:
+        if reduced_workday:
+            return (
+                cls.REDUCED_FINAL_CLICK_MIN_DELAY_SECONDS,
+                cls.REDUCED_FINAL_CLICK_MAX_DELAY_SECONDS,
+            )
+        return cls.FINAL_CLICK_MIN_DELAY_SECONDS, cls.FINAL_CLICK_MAX_DELAY_SECONDS
+
+    def _final_click_delay_bounds_for_day(self, day_iso: str) -> Tuple[int, int]:
+        return self._final_click_delay_bounds_for_mode(self.is_reduced_workday_for_day(day_iso))
+
+    def _final_click_delay_bounds_for_timestamp(self, first_click_ts: float) -> Tuple[int, int]:
+        first_click_day = datetime.fromtimestamp(first_click_ts).date().isoformat()
+        return self._final_click_delay_bounds_for_day(first_click_day)
+
+    def _minimum_first_click_dt_for_final_day(self, reference_dt: datetime) -> datetime:
+        _, max_delay_seconds = self._final_click_delay_bounds_for_day(reference_dt.date().isoformat())
+        return self._minimum_final_click_dt_for_day(reference_dt) - timedelta(
+            seconds=max_delay_seconds
         )
 
     @staticmethod
@@ -893,7 +996,10 @@ class WorkdayAgentService:
         today = datetime.now().date().isoformat()
         state["blocked_start_date"] = settings.get("blocked_start_date", "")
         state["blocked_end_date"] = settings.get("blocked_end_date", "")
+        state["reduced_start_date"] = settings.get("reduced_start_date", "")
+        state["reduced_end_date"] = settings.get("reduced_end_date", "")
         state["blocked_today"] = self.is_automatic_start_blocked_for_day(today)
+        state["reduced_today"] = self.is_reduced_workday_for_day(today)
 
         if phase == "waiting_start":
             planned = float(state.get("planned_first_ts", 0))

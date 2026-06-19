@@ -2840,8 +2840,8 @@ def create_ui_router(job_secret: str) -> APIRouter:
         <div class=\"workday-metric-card\">
           <span class=\"workday-metric-label\">Operating window</span>
           <div class=\"workday-window-stack\">
-            <strong class=\"workday-window-time\">06:57 - 09:30</strong>
-            <span class=\"muted\">Automatic start window</span>
+            <strong class=\"workday-window-time\">07:14 - 09:30</strong>
+            <span class=\"muted\">07:44 start on reduced days</span>
           </div>
         </div>
         <div class=\"workday-metric-card\">
@@ -2849,8 +2849,8 @@ def create_ui_router(job_secret: str) -> APIRouter:
           <div id=\"workdayExpected\" class=\"workday-metric-value muted\"></div>
         </div>
         <div class=\"workday-metric-card\">
-          <span class=\"workday-metric-label\">Blocked period</span>
-          <div id=\"workdaySettingsStatus\" class=\"workday-metric-value muted\">Loading blocked range...</div>
+          <span class=\"workday-metric-label\">Schedule policy</span>
+          <div id=\"workdaySettingsStatus\" class=\"workday-metric-value muted\">Loading schedule policy...</div>
         </div>
       </div>
     </div>
@@ -2869,24 +2869,32 @@ def create_ui_router(job_secret: str) -> APIRouter:
         <div class=\"workday-section-head\">
           <div>
             <p class=\"workday-section-kicker\">Scheduler policy</p>
-            <h3>Blocked days</h3>
+            <h3>Schedule dates</h3>
           </div>
-          <span class=\"workday-mini-badge\" data-variant=\"warning\">Auto-start guard</span>
+          <span class=\"workday-mini-badge\" data-variant=\"warning\">Date policy</span>
         </div>
-        <p class=\"muted workday-block-copy\">If today is inside this range, the scheduler will not start requests automatically.</p>
+        <p class=\"muted workday-block-copy\">Blocked days disable automatic start. Reduced workdays plan 7h of work plus the same 15m break.</p>
         <div class=\"workday-date-grid\">
           <label class=\"workday-date-field\">
-            <span class=\"muted\">Start date</span>
+            <span class=\"muted\">Blocked start</span>
             <input id=\"workdayBlockedStartDate\" type=\"date\" class=\"field\" />
           </label>
           <label class=\"workday-date-field\">
-            <span class=\"muted\">End date</span>
+            <span class=\"muted\">Blocked end</span>
             <input id=\"workdayBlockedEndDate\" type=\"date\" class=\"field\" />
+          </label>
+          <label class=\"workday-date-field\">
+            <span class=\"muted\">Reduced start</span>
+            <input id=\"workdayReducedStartDate\" type=\"date\" class=\"field\" />
+          </label>
+          <label class=\"workday-date-field\">
+            <span class=\"muted\">Reduced end</span>
+            <input id=\"workdayReducedEndDate\" type=\"date\" class=\"field\" />
           </label>
         </div>
         <div class=\"workday-block-actions\">
           <button onclick=\"openWorkdayClearModal()\" id=\"workdayClearSettingsBtn\">Clear blocked range</button>
-          <button onclick=\"saveWorkdaySettings()\" id=\"workdaySaveSettingsBtn\">Save blocked dates</button>
+          <button onclick=\"saveWorkdaySettings()\" id=\"workdaySaveSettingsBtn\">Save schedule dates</button>
         </div>
       </div>
     </div>
@@ -3532,13 +3540,36 @@ async function refreshWorkdayPanel() {
   await Promise.all([loadWorkdayStatus(), loadWorkdayHistory(), loadWorkdayEvents()]);
 }
 
-function syncWorkdayBlockedSettingsUi(start, end) {
-  const cleanStart = String(start || '');
-  const cleanEnd = String(end || '');
-  document.getElementById('workdayBlockedStartDate').value = cleanStart;
-  document.getElementById('workdayBlockedEndDate').value = cleanEnd;
+function syncWorkdaySettingsUi(blockedStart, blockedEnd, reducedStart, reducedEnd) {
+  const cleanBlockedStart = String(blockedStart || '');
+  const cleanBlockedEnd = String(blockedEnd || '');
+  const cleanReducedStart = String(reducedStart || '');
+  const cleanReducedEnd = String(reducedEnd || '');
+  document.getElementById('workdayBlockedStartDate').value = cleanBlockedStart;
+  document.getElementById('workdayBlockedEndDate').value = cleanBlockedEnd;
+  document.getElementById('workdayReducedStartDate').value = cleanReducedStart;
+  document.getElementById('workdayReducedEndDate').value = cleanReducedEnd;
   const clearBtn = document.getElementById('workdayClearSettingsBtn');
-  if (clearBtn) clearBtn.disabled = !(cleanStart && cleanEnd);
+  if (clearBtn) clearBtn.disabled = !(cleanBlockedStart && cleanBlockedEnd);
+}
+
+function formatWorkdaySettingsStatus(blockedStart, blockedEnd, reducedStart, reducedEnd) {
+  const items = [];
+  if (blockedStart && blockedEnd) items.push(`Block: ${blockedStart} - ${blockedEnd}`);
+  if (reducedStart && reducedEnd) items.push(`Reduced workdays: ${reducedStart} - ${reducedEnd}`);
+  return items.length ? items.join(' | ') : 'No scheduler date ranges configured.';
+}
+
+function validateWorkdayDatePair(start, end, label, statusBox) {
+  if ((start && !end) || (!start && end)) {
+    statusBox.innerText = `You must provide both ${label} dates: start and end.`;
+    return false;
+  }
+  if (start && end && start > end) {
+    statusBox.innerText = `${label} start date cannot be later than end date.`;
+    return false;
+  }
+  return true;
 }
 
 async function loadWorkdaySettings() {
@@ -3547,12 +3578,17 @@ async function loadWorkdaySettings() {
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
     const settings = (data && data.settings) ? data.settings : {};
-    const start = String(settings.blocked_start_date || '');
-    const end = String(settings.blocked_end_date || '');
-    syncWorkdayBlockedSettingsUi(start, end);
-    document.getElementById('workdaySettingsStatus').innerText = (start && end)
-      ? `Active block: ${start} - ${end}`
-      : 'No blocked range configured.';
+    const blockedStart = String(settings.blocked_start_date || '');
+    const blockedEnd = String(settings.blocked_end_date || '');
+    const reducedStart = String(settings.reduced_start_date || '');
+    const reducedEnd = String(settings.reduced_end_date || '');
+    syncWorkdaySettingsUi(blockedStart, blockedEnd, reducedStart, reducedEnd);
+    document.getElementById('workdaySettingsStatus').innerText = formatWorkdaySettingsStatus(
+      blockedStart,
+      blockedEnd,
+      reducedStart,
+      reducedEnd
+    );
   } catch (err) {
     document.getElementById('workdaySettingsStatus').innerText = `Error loading workday settings: ${err}`;
   }
@@ -3571,18 +3607,14 @@ function closeWorkdayClearModal() {
 async function saveWorkdaySettings() {
   const btn = document.getElementById('workdaySaveSettingsBtn');
   const oldText = btn.innerText;
-  const start = String(document.getElementById('workdayBlockedStartDate').value || '').trim();
-  const end = String(document.getElementById('workdayBlockedEndDate').value || '').trim();
+  const blockedStart = String(document.getElementById('workdayBlockedStartDate').value || '').trim();
+  const blockedEnd = String(document.getElementById('workdayBlockedEndDate').value || '').trim();
+  const reducedStart = String(document.getElementById('workdayReducedStartDate').value || '').trim();
+  const reducedEnd = String(document.getElementById('workdayReducedEndDate').value || '').trim();
   const statusBox = document.getElementById('workdaySettingsStatus');
 
-  if ((start && !end) || (!start && end)) {
-    statusBox.innerText = 'You must provide both dates: start and end.';
-    return;
-  }
-  if (start && end && start > end) {
-    statusBox.innerText = 'Start date cannot be later than end date.';
-    return;
-  }
+  if (!validateWorkdayDatePair(blockedStart, blockedEnd, 'blocked', statusBox)) return;
+  if (!validateWorkdayDatePair(reducedStart, reducedEnd, 'reduced workday', statusBox)) return;
 
   btn.disabled = true;
   btn.innerText = 'Saving...';
@@ -3591,19 +3623,26 @@ async function saveWorkdaySettings() {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        blocked_start_date: start,
-        blocked_end_date: end
+        blocked_start_date: blockedStart,
+        blocked_end_date: blockedEnd,
+        reduced_start_date: reducedStart,
+        reduced_end_date: reducedEnd
       })
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
     const updated = (data && data.settings) ? data.settings : {};
-    const updatedStart = String(updated.blocked_start_date || '');
-    const updatedEnd = String(updated.blocked_end_date || '');
-    syncWorkdayBlockedSettingsUi(updatedStart, updatedEnd);
-    statusBox.innerText = (updatedStart && updatedEnd)
-      ? `Block saved: ${updatedStart} - ${updatedEnd}`
-      : 'Blocked range removed.';
+    const updatedBlockedStart = String(updated.blocked_start_date || '');
+    const updatedBlockedEnd = String(updated.blocked_end_date || '');
+    const updatedReducedStart = String(updated.reduced_start_date || '');
+    const updatedReducedEnd = String(updated.reduced_end_date || '');
+    syncWorkdaySettingsUi(updatedBlockedStart, updatedBlockedEnd, updatedReducedStart, updatedReducedEnd);
+    statusBox.innerText = formatWorkdaySettingsStatus(
+      updatedBlockedStart,
+      updatedBlockedEnd,
+      updatedReducedStart,
+      updatedReducedEnd
+    );
     await loadWorkdayStatus();
   } catch (err) {
     statusBox.innerText = `Error saving workday settings: ${err}`;
@@ -3620,6 +3659,8 @@ async function clearWorkdaySettings() {
   const oldText = btn.innerText;
   const oldConfirmText = confirmBtn.innerText;
   const statusBox = document.getElementById('workdaySettingsStatus');
+  const reducedStart = String(document.getElementById('workdayReducedStartDate').value || '').trim();
+  const reducedEnd = String(document.getElementById('workdayReducedEndDate').value || '').trim();
 
   btn.disabled = true;
   btn.innerText = 'Clearing...';
@@ -3632,13 +3673,18 @@ async function clearWorkdaySettings() {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         blocked_start_date: '',
-        blocked_end_date: ''
+        blocked_end_date: '',
+        reduced_start_date: reducedStart,
+        reduced_end_date: reducedEnd
       })
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
-    syncWorkdayBlockedSettingsUi('', '');
-    statusBox.innerText = 'Blocked range removed.';
+    const updated = (data && data.settings) ? data.settings : {};
+    const updatedReducedStart = String(updated.reduced_start_date || '');
+    const updatedReducedEnd = String(updated.reduced_end_date || '');
+    syncWorkdaySettingsUi('', '', updatedReducedStart, updatedReducedEnd);
+    statusBox.innerText = formatWorkdaySettingsStatus('', '', updatedReducedStart, updatedReducedEnd);
     closeWorkdayClearModal();
     await loadWorkdayStatus();
   } catch (err) {
@@ -3687,11 +3733,17 @@ async function loadWorkdayStatus() {
     if (data.blocked_start_date && data.blocked_end_date) {
       expected.push(`Auto-start block: ${data.blocked_start_date} - ${data.blocked_end_date}`);
     }
+    if (data.reduced_start_date && data.reduced_end_date) {
+      expected.push(`Reduced workdays: ${data.reduced_start_date} - ${data.reduced_end_date}`);
+    }
     if (phase === 'before_start' && data.blocked_today) {
       expected.push('Today is blocked by date settings');
     }
+    if (data.reduced_today) {
+      expected.push('Reduced duration: 7h work + 15m break');
+    }
     if (phase === 'before_start') {
-      expected.push('Start window: 06:57 - 09:30');
+      expected.push(data.reduced_today ? 'Start window: 07:44 - 09:30' : 'Start window: 07:14 - 09:30');
     }
     if (phase === 'waiting_start' && data.planned_first_ts) {
       expected.push(`Planned first click: ${formatTs(data.planned_first_ts)}`);
