@@ -1292,8 +1292,37 @@ class WorkdayAgentService:
         timeout_ms: int = 15_000,
     ) -> None:
         click_selector = f"button:has(svg[aria-label='{click_icon_label}'])"
-        self._click_icon_button(page, click_icon_label, timeout_ms=timeout_ms)
         expected_selector = f"button:has(svg[aria-label='{expected_icon_label}'])"
+
+        def reload_for_retry(reason: str) -> None:
+            self.logger.warning(
+                "Transition retry for %s after %s; reloading page",
+                action_label,
+                reason,
+            )
+            try:
+                page.reload(wait_until="domcontentloaded", timeout=60_000)
+                self._dismiss_cookie_popup(page)
+                self._dismiss_location_prompt(page)
+            except Exception:
+                self.logger.exception("Failed to reload page during transition retry (%s)", action_label)
+
+        try:
+            self._click_icon_button(page, click_icon_label, timeout_ms=timeout_ms)
+        except Exception as first_click_err:
+            if self._is_selector_visible(page, expected_selector, timeout_ms=2_000):
+                self.logger.info("Transition already confirmed for %s after click target failure", action_label)
+                return
+            reload_for_retry(f"missing click target {click_icon_label}")
+            if self._is_selector_visible(page, expected_selector, timeout_ms=4_000):
+                self.logger.info("Transition confirmed after reload for %s", action_label)
+                return
+            if not self._is_selector_visible(page, click_selector, timeout_ms=timeout_ms):
+                raise RuntimeError(
+                    f"Could not click {action_label}: {click_icon_label} did not appear after reload"
+                ) from first_click_err
+            self._click_icon_button(page, click_icon_label, timeout_ms=timeout_ms)
+
         if self._is_selector_visible(page, expected_selector, timeout_ms=timeout_ms):
             return
 
@@ -1301,12 +1330,7 @@ class WorkdayAgentService:
             "Transition not confirmed for %s on first attempt; reloading and retrying",
             action_label,
         )
-        try:
-            page.reload(wait_until="domcontentloaded", timeout=60_000)
-            self._dismiss_cookie_popup(page)
-            self._dismiss_location_prompt(page)
-        except Exception:
-            self.logger.exception("Failed to reload page during transition retry (%s)", action_label)
+        reload_for_retry("unconfirmed transition")
 
         if self._is_selector_visible(page, expected_selector, timeout_ms=4_000):
             self.logger.info("Transition confirmed after reload for %s", action_label)
@@ -1759,6 +1783,8 @@ class WorkdayAgentService:
                 "recovered": True,
                 "planned_final_ts": planned_final_ts,
             }
+            if retry_phase:
+                result["failed_phase"] = retry_phase
             scheduled_at = self._timestamp_to_local_iso(planned_final_ts)
             executed_at = self._timestamp_to_local_iso(final_click_ts)
             if scheduled_at:
@@ -2124,6 +2150,8 @@ class WorkdayAgentService:
                     "url": page.url if "page" in locals() else "",
                     "planned_final_ts": planned_final_ts,
                 }
+                if retry_phase:
+                    result["failed_phase"] = retry_phase
                 scheduled_at = self._timestamp_to_local_iso(planned_final_ts)
                 executed_at = self._timestamp_to_local_iso(final_click_ts)
                 if scheduled_at:

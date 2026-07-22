@@ -224,6 +224,73 @@ class WorkdayResilienceTests(unittest.TestCase):
             picked = svc._pick_largest_visible_locator(page, selector)
             self.assertIs(picked, large)
 
+    def test_transition_reloads_when_click_target_is_missing_initially(self) -> None:
+        class _ReloadingPage:
+            def __init__(self):
+                self.reloads = 0
+
+            def reload(self, **kwargs):
+                self.reloads += 1
+
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _ReloadingPage()
+            clicked_icons: list[str] = []
+
+            def fake_click_icon(page_obj, icon_label: str, timeout_ms: int = 15_000):
+                clicked_icons.append(icon_label)
+                if len(clicked_icons) == 1:
+                    raise RuntimeError("selector not visible")
+
+            def fake_is_visible(page_obj, selector: str, timeout_ms: int = 0) -> bool:
+                if "Icon-play" in selector:
+                    return page_obj.reloads > 0
+                if "Icon-stop" in selector:
+                    return len(clicked_icons) >= 2
+                return False
+
+            svc._click_icon_button = fake_click_icon
+            svc._is_selector_visible = fake_is_visible
+            svc._dismiss_cookie_popup = lambda page_obj: False
+            svc._dismiss_location_prompt = lambda page_obj: False
+
+            svc._click_and_confirm_transition(page, "Icon-play", "Icon-stop", "break end")
+
+            self.assertEqual(page.reloads, 1)
+            self.assertEqual(clicked_icons, ["Icon-play", "Icon-play"])
+
+    def test_transition_accepts_expected_state_after_missing_click_target_reload(self) -> None:
+        class _ReloadingPage:
+            def __init__(self):
+                self.reloads = 0
+
+            def reload(self, **kwargs):
+                self.reloads += 1
+
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _ReloadingPage()
+            clicked_icons: list[str] = []
+
+            def fake_click_icon(page_obj, icon_label: str, timeout_ms: int = 15_000):
+                clicked_icons.append(icon_label)
+                raise RuntimeError("selector not visible")
+
+            def fake_is_visible(page_obj, selector: str, timeout_ms: int = 0) -> bool:
+                if "Icon-stop" in selector:
+                    return page_obj.reloads > 0
+                return False
+
+            svc._click_icon_button = fake_click_icon
+            svc._is_selector_visible = fake_is_visible
+            svc._dismiss_cookie_popup = lambda page_obj: False
+            svc._dismiss_location_prompt = lambda page_obj: False
+
+            svc._click_and_confirm_transition(page, "Icon-play", "Icon-stop", "break end")
+
+            self.assertEqual(page.reloads, 1)
+            self.assertEqual(clicked_icons, ["Icon-play"])
+
 
 if __name__ == "__main__":
     unittest.main()
