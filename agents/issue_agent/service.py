@@ -1464,9 +1464,13 @@ class IssueAgentService:
             page.locator("li[role='option']").filter(has_text=exact_match).first,
             page.locator("li[role='menuitem']").filter(has_text=exact_match).first,
             page.locator("button[role='option']").filter(has_text=exact_match).first,
+            page.locator("[role='option']").filter(has_text=exact_match).first,
+            page.locator("[role='menuitem']").filter(has_text=exact_match).first,
             page.locator("li[role='option']").filter(has_text=partial_match).first,
             page.locator("li[role='menuitem']").filter(has_text=partial_match).first,
             page.locator("button[role='option']").filter(has_text=partial_match).first,
+            page.locator("[role='option']").filter(has_text=partial_match).first,
+            page.locator("[role='menuitem']").filter(has_text=partial_match).first,
         ]
 
         last_error: Optional[Exception] = None
@@ -1607,6 +1611,76 @@ class IssueAgentService:
         if last_error is not None:
             self._playwright_step(f"{label} failed")
             raise last_error
+
+    def _open_project_status_field_button(self, page, timeout_ms: int = 5000) -> None:
+        status_value_pattern = re.compile(
+            r"\b(?:Todo|Backlog|Paused|To Validate|Analysis|Design|Validated|In Progress|In Review|Ready|"
+            r"Blocked|Done|Viability|Approved|Rejected|Parent Task|Choose an option)\b",
+            re.I,
+        )
+        status_label_pattern = re.compile(r"\bStatus\b", re.I)
+        status_rows = [
+            page.locator(
+                "xpath=//span[normalize-space()='Status']/ancestor::*[self::div or self::section or self::aside][1]"
+            ),
+            page.locator(
+                "xpath=//*[normalize-space()='Status']/ancestor::*[self::div or self::section or self::aside][1]"
+            ),
+            page.locator("div,section,aside").filter(has_text=status_label_pattern).filter(has_text=status_value_pattern),
+        ]
+        control_selectors = [
+            ("button[aria-haspopup='listbox']", False),
+            ("button[aria-haspopup='menu']", False),
+            ("button[aria-expanded]", False),
+            ("button", True),
+        ]
+
+        last_error: Optional[Exception] = None
+        for attempt in range(3):
+            self._playwright_step(f"Open Status ({attempt + 1}/3)")
+            self._dismiss_open_overlays(page)
+            try:
+                self._ensure_project_post_fields_visible(page)
+            except Exception as err:
+                last_error = err
+
+            for row in status_rows:
+                for selector, should_filter_by_value in control_selectors:
+                    try:
+                        controls = row.locator(selector)
+                        if should_filter_by_value:
+                            controls = controls.filter(has_text=status_value_pattern)
+                        total = min(controls.count(), 8)
+                    except Exception as err:
+                        last_error = err
+                        continue
+                    for idx in range(total):
+                        control = controls.nth(idx)
+                        try:
+                            self._debug("Opening project status field", attempt=attempt + 1, selector=selector)
+                            self._click_locator_resilient(control, timeout_ms=timeout_ms)
+                            page.wait_for_timeout(220)
+                            self._playwright_step("Status opened")
+                            return
+                        except Exception as err:
+                            last_error = err
+                            continue
+
+            try:
+                fallback_button = page.locator("button").filter(has_text=status_value_pattern).first
+                self._debug("Opening project status field via value fallback", attempt=attempt + 1)
+                self._click_locator_resilient(fallback_button, timeout_ms=timeout_ms)
+                page.wait_for_timeout(220)
+                self._playwright_step("Status opened")
+                return
+            except Exception as err:
+                last_error = err
+                page.wait_for_timeout(180)
+
+        if last_error is not None:
+            self._playwright_step("Status failed")
+            raise last_error
+        raise RuntimeError("Unable to open project status field")
 
     @staticmethod
     def _append_issue_warning(issue: Dict[str, Any], message: str) -> None:
@@ -1951,19 +2025,10 @@ class IssueAgentService:
         for attempt in range(3):
             try:
                 self._playwright_step(f"Set status ({attempt + 1}/3)", status=status_label)
-                if attempt == 0:
-                    self._ensure_project_post_fields_visible(page)
-                    page.wait_for_timeout(500)
-                elif attempt == 1:
-                    self._dismiss_open_overlays(page)
-                    status_button = page.locator("button").filter(has_text=re.compile(r"Status|Todo|Backlog", re.I)).first
-                    self._click_locator_resilient(status_button, timeout_ms=4000)
-                    page.wait_for_timeout(500)
-                else:
+                if attempt == 2:
                     page.keyboard.press("Escape")
                     page.wait_for_timeout(250)
-                    self._ensure_project_post_fields_visible(page)
-                    page.wait_for_timeout(500)
+                self._open_project_status_field_button(page, timeout_ms=5000)
 
                 try:
                     self._click_option_by_text(page, status_label)

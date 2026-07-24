@@ -145,6 +145,17 @@ class _SuccessLocator:
         return False
 
 
+class _EmptyLocator(_SuccessLocator):
+    def count(self):
+        return 0
+
+    def wait_for(self, *args, **kwargs):
+        raise RuntimeError("locator is empty")
+
+    def click(self, *args, **kwargs):
+        raise RuntimeError("locator is empty")
+
+
 class _SuccessPage:
     def __init__(self):
         self.keyboard = _FakeKeyboard()
@@ -451,6 +462,117 @@ class _ProjectExpansionPriorityPage:
         return None
 
 
+class _VisibleBusinessUnitButtonLocator(_SuccessLocator):
+    def count(self):
+        return 1
+
+    def is_visible(self):
+        return True
+
+
+class _StatusButtonRootLocator:
+    def __init__(self, page):
+        self.page = page
+
+    def filter(self, **kwargs):
+        has_text = str(kwargs.get("has_text") or "")
+        if "Business Unit" in has_text:
+            return _VisibleBusinessUnitButtonLocator()
+        return _EmptyLocator()
+
+
+class _StatusValueButtonLocator:
+    def __init__(self, page, selector: str):
+        self.page = page
+        self.selector = selector
+
+    @property
+    def first(self):
+        return self
+
+    def filter(self, **kwargs):
+        return self
+
+    def count(self):
+        return 1
+
+    def nth(self, idx):
+        return self
+
+    def wait_for(self, *args, **kwargs):
+        return None
+
+    def scroll_into_view_if_needed(self, *args, **kwargs):
+        return None
+
+    def click(self, *args, **kwargs):
+        self.page.status_dropdown_opened = True
+        self.page.status_click_log.append(self.selector)
+        return None
+
+
+class _StatusRowLocator:
+    def __init__(self, page):
+        self.page = page
+
+    def locator(self, selector, *args, **kwargs):
+        selector_text = str(selector)
+        if selector_text in {
+            "button[aria-haspopup='listbox']",
+            "button[aria-haspopup='menu']",
+            "button[aria-expanded]",
+            "button",
+        }:
+            return _StatusValueButtonLocator(self.page, selector_text)
+        return _EmptyLocator()
+
+
+class _StatusOptionLocator(_SuccessLocator):
+    def __init__(self, page):
+        self.page = page
+
+    def wait_for(self, *args, **kwargs):
+        if not self.page.status_dropdown_opened:
+            raise RuntimeError("status dropdown is closed")
+        return None
+
+    def click(self, *args, **kwargs):
+        self.page.status_option_clicked = True
+        return None
+
+
+class _StatusRequiresOpenPage:
+    def __init__(self):
+        self.keyboard = _FakeKeyboard()
+        self.status_dropdown_opened = False
+        self.status_option_clicked = False
+        self.status_click_log = []
+
+    def locator(self, selector, *args, **kwargs):
+        selector_text = str(selector)
+        if selector_text == "button":
+            return _StatusButtonRootLocator(self)
+        if selector_text in {
+            "li[role='option']",
+            "li[role='menuitem']",
+            "button[role='option']",
+            "[role='option']",
+            "[role='menuitem']",
+        }:
+            return _StatusOptionLocator(self)
+        if selector_text in {
+            "xpath=//span[normalize-space()='Status']/ancestor::*[self::div or self::section or self::aside][1]",
+            "xpath=//*[normalize-space()='Status']/ancestor::*[self::div or self::section or self::aside][1]",
+        }:
+            return _StatusRowLocator(self)
+        if selector_text == "div,section,aside":
+            return _EmptyLocator()
+        return _SuccessLocator()
+
+    def wait_for_timeout(self, *args, **kwargs):
+        return None
+
+
 class _IssueTypeKeyboard:
     def __init__(self, page):
         self.page = page
@@ -708,6 +830,37 @@ class IssueServiceTests(unittest.TestCase):
             svc._open_project_field_button(page, "Business Unit", timeout_ms=50)
             self.assertEqual(3, page.field_locator.attempts)
             self.assertGreaterEqual(page.keyboard.pressed.count("Escape"), 2)
+
+    def test_open_project_status_field_button_uses_status_row_value_button(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _StatusRequiresOpenPage()
+            svc._open_project_status_field_button(page, timeout_ms=50)
+            self.assertTrue(page.status_dropdown_opened)
+            self.assertEqual(["button[aria-haspopup='listbox']"], page.status_click_log)
+
+    def test_apply_post_creation_fields_opens_status_dropdown_before_selecting_todo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._build_service(Path(tmp))
+            page = _StatusRequiresOpenPage()
+            selected_options = []
+
+            def _click_option(page_arg, text, *args, **kwargs):
+                if str(text) == "Todo" and not page_arg.status_dropdown_opened:
+                    raise RuntimeError("status dropdown is closed")
+                selected_options.append(str(text))
+
+            svc._click_option_by_text = _click_option
+            svc._open_project_field_button = lambda *args, **kwargs: None
+
+            warnings = svc._apply_post_creation_fields(
+                page=page,
+                unit_label="Customer",
+                status_label="Todo",
+            )
+            self.assertEqual([], warnings)
+            self.assertIn("Todo", selected_options)
+            self.assertTrue(page.status_dropdown_opened)
 
     def test_ensure_project_post_fields_visible_expands_with_chevron(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
