@@ -10,4 +10,4 @@ else
   PYTHON_BIN="${PYTHON_BIN:-python}"
 fi
 
-exec "${PYTHON_BIN}" -m uvicorn main:APP --host "${HOST}" --port "${PORT}" --reload
+exec "${PYTHON_BIN}" -m uvicorn main:APP --host "${HOST}" --port "${PORT}" --reload --no-proxy-headers

@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 
 from agents.answers_agent.service import AnswersAgentService
+from agents.discord_agent.service import DiscordAgentService
 from agents.email_agent.service import EmailAgentService
 from agents.issue_agent.service import IssueAgentService
 from agents.support_guidance import (
@@ -23,6 +24,7 @@ from agents.support_guidance import (
 )
 from agents.workday_agent.service import WorkdayAgentService
 from routers.answers_agent import create_answers_router
+from routers.discord_agent import create_discord_router
 from routers.email_agent import create_email_router
 from routers.issue_agent import create_issue_router
 from routers.ui import create_ui_router
@@ -177,6 +179,36 @@ def _setting_email_whitelist(name: str, aliases: list[str]) -> List[str]:
     return []
 
 
+def _normalize_string_list(raw: Any) -> List[str]:
+    """Normalize comma-separated env values or JSON option arrays into strings."""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    if isinstance(raw, str):
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    return [str(raw).strip()] if str(raw).strip() else []
+
+
+def _setting_string_list(name: str) -> List[str]:
+    """Read an allow-list from ENV or add-on options without leaking its values."""
+    env_name = name.upper()
+    if env_name in os.environ:
+        return _normalize_string_list(os.getenv(env_name, ""))
+    return _normalize_string_list(ADDON_OPTIONS.get(name.lower()))
+
+
+def _setting_bool(name: str, default: bool = False) -> bool:
+    """Read a boolean option with conservative false-by-default behavior."""
+    env_name = name.upper()
+    raw: Any = os.getenv(env_name) if env_name in os.environ else ADDON_OPTIONS.get(name.lower(), default)
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "si", "sí"}
+
+
 # Compartido
 JOB_SECRET = _setting("job_secret", "")
 
@@ -291,6 +323,17 @@ ISSUE_BUG_PARENT_ISSUE_BACKEND = _setting_with_aliases(
     "",
 )
 ISSUE_BUG_PARENT_ISSUE_MANAGEMENT = _setting("issue_bug_parent_issue_management", "")
+
+# Discord agent (read-only channel summaries + issue suggestions).
+# This integration is deliberately opt-in so a deployment never contacts Discord on upgrade.
+DISCORD_ENABLED = _setting_bool("discord_enabled", False)
+DISCORD_BOT_TOKEN = _setting("discord_bot_token", "")
+DISCORD_OPENAI_API_KEY = _setting("discord_openai_api_key", "")
+DISCORD_OPENAI_MODEL = _setting("discord_openai_model", "gpt-5-mini")
+DISCORD_CHANNEL_IDS = _setting_string_list("discord_channel_ids")
+DISCORD_POLL_INTERVAL_MINUTES = max(1, _setting_int("discord_poll_interval_minutes", 15))
+DISCORD_SUMMARY_MIN_MESSAGES = max(1, _setting_int("discord_summary_min_messages", 5))
+DISCORD_RETENTION_DAYS = max(1, _setting_int("discord_retention_days", 14))
 
 # Agente respuestas (Telegram)
 DEFAULT_ANSWERS_DATA_DIR = (DATA_DIR / "answers_agent").resolve()
@@ -494,6 +537,19 @@ issue_service = IssueAgentService(
     logger=logger.getChild("issue_agent"),
 )
 
+discord_service = DiscordAgentService(
+    data_dir=DATA_DIR,
+    bot_token=DISCORD_BOT_TOKEN,
+    openai_api_key=DISCORD_OPENAI_API_KEY,
+    openai_model=DISCORD_OPENAI_MODEL,
+    channel_ids=DISCORD_CHANNEL_IDS,
+    poll_interval_minutes=DISCORD_POLL_INTERVAL_MINUTES,
+    summary_min_messages=DISCORD_SUMMARY_MIN_MESSAGES,
+    retention_days=DISCORD_RETENTION_DAYS,
+    logger=logger.getChild("discord_agent"),
+    enabled=DISCORD_ENABLED,
+)
+
 answers_service = AnswersAgentService(
     data_dir=ANSWERS_DATA_DIR,
     telegram_bot_token=ANSWERS_TELEGRAM_BOT_TOKEN,
@@ -605,6 +661,33 @@ def _issue_health_payload() -> Dict[str, Any]:
         "has_webhook_url": bool(ISSUE_WEBHOOK_URL),
         "bug_parent_repo_by_repo": issue_service.bug_parent_repo_by_repo,
         "bug_parent_issue_number_by_repo": issue_service.bug_parent_issue_number_by_repo,
+    }
+
+
+def _discord_missing_required_config() -> List[str]:
+    """Delegate validation to the service so scheduler and UI agree exactly."""
+    status = discord_service.get_status()
+    return list(status.get("missing_required_config", []))
+
+
+def _discord_health_payload() -> Dict[str, Any]:
+    status = discord_service.get_status()
+    missing = _discord_missing_required_config()
+    return {
+        "enabled": DISCORD_ENABLED,
+        "config_valid": len(missing) == 0,
+        "missing_required_config": missing,
+        "has_bot_token": bool(status.get("has_bot_token")),
+        "has_openai_api_key": bool(status.get("has_openai_api_key")),
+        "has_openai_model": bool(DISCORD_OPENAI_MODEL),
+        "channel_count": len(DISCORD_CHANNEL_IDS),
+        "poll_interval_minutes": DISCORD_POLL_INTERVAL_MINUTES,
+        "summary_min_messages": discord_service.summary_min_messages,
+        "retention_days": DISCORD_RETENTION_DAYS,
+        "state_path": status.get("state_path", ""),
+        "summaries_path": status.get("summaries_path", ""),
+        "last_poll_at": status.get("last_poll_at", ""),
+        "last_error": status.get("last_error", ""),
     }
 
 
@@ -801,6 +884,49 @@ def _issue_daily_report_loop() -> None:
         time.sleep(300)
 
 
+def _discord_poll_loop() -> None:
+    """Poll configured Discord channels only while the opt-in integration is enabled."""
+    logger.info(
+        "Discord-agent scheduler started (interval_minutes=%s, channel_count=%s)",
+        DISCORD_POLL_INTERVAL_MINUTES,
+        len(DISCORD_CHANNEL_IDS),
+    )
+    last_invalid_signature = ""
+    while True:
+        missing = _discord_missing_required_config()
+        if missing:
+            signature = ",".join(sorted(missing))
+            if signature != last_invalid_signature:
+                logger.error("Invalid Discord-agent config. Missing: %s", signature)
+                last_invalid_signature = signature
+            time.sleep(60)
+            continue
+
+        last_invalid_signature = ""
+        try:
+            result = discord_service.poll_new_messages()
+            if result.get("ok", True):
+                if result.get("warnings"):
+                    logger.warning(
+                        "Discord-agent scheduler completed with coverage warnings (warnings=%s)",
+                        len(result.get("warnings", [])),
+                    )
+                else:
+                    logger.info(
+                        "Discord-agent scheduler completed (messages=%s, summaries=%s)",
+                        result.get("message_count", 0),
+                        result.get("summary_count", 0),
+                    )
+            else:
+                logger.warning(
+                    "Discord-agent scheduler completed with channel errors (errors=%s)",
+                    len(result.get("errors", [])),
+                )
+        except Exception:
+            logger.exception("Unhandled failure in Discord-agent scheduler")
+        time.sleep(DISCORD_POLL_INTERVAL_MINUTES * 60)
+
+
 def _build_agent_modules() -> List[AgentModule]:
     return [
         AgentModule(
@@ -838,6 +964,20 @@ def _build_agent_modules() -> List[AgentModule]:
             health_factory=_issue_health_payload,
             startup_tasks=(
                 ("daily_report", _issue_daily_report_loop),
+            ),
+        ),
+        AgentModule(
+            name="discord_agent",
+            router_factory=lambda: create_discord_router(
+                discord_service,
+                JOB_SECRET,
+                _discord_missing_required_config,
+            ),
+            health_factory=_discord_health_payload,
+            startup_tasks=(
+                (("scheduler", _discord_poll_loop),)
+                if DISCORD_ENABLED
+                else ()
             ),
         ),
         AgentModule(

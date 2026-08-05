@@ -12,6 +12,8 @@ Servicio Python (FastAPI + Playwright) para ejecutar automatizaciones web y gest
 - `routers/email_agent.py`: endpoints del agente de correo (`/email-agent/*`).
 - `agents/issue_agent/service.py`: lógica del agente de issues (OpenAI + Playwright + memoria + webhook).
 - `routers/issue_agent.py`: endpoints del agente de issues (`/issue-agent/*`).
+- `agents/discord_agent/service.py`: lector de canales Discord, resúmenes IA y propuestas de tareas en modo solo lectura.
+- `routers/discord_agent.py`: endpoints del agente Discord (`/discord-agent/*`).
 - `routers/auth.py`: utilidades de autenticación compartidas para routers.
 - `routers/ui.py`: UI integrada multiagente (`/ui`).
 - `main.py`: carga configuración, instancia servicios y monta routers.
@@ -107,6 +109,31 @@ Campos obligatorios para que `issue_agent` pueda generar/rellenar issues:
 - `ISSUE_TARGET_WEB_URL`
 - `ISSUE_OPENAI_API_KEY`
 
+### Agente Discord (`discord_agent`)
+
+- `DISCORD_ENABLED` (por defecto `false`; debe activarse explícitamente)
+- `DISCORD_BOT_TOKEN` (secreto del bot de Discord)
+- `DISCORD_OPENAI_API_KEY` (clave de OpenAI exclusiva para este agente)
+- `DISCORD_OPENAI_MODEL` (por defecto `gpt-5-mini`)
+- `DISCORD_CHANNEL_IDS` (CSV en variables de entorno; lista JSON en `options.json`)
+- `DISCORD_POLL_INTERVAL_MINUTES` (por defecto `15`)
+- `DISCORD_SUMMARY_MIN_MESSAGES` (por defecto `5`; rango `1`–`100`)
+- `DISCORD_RETENTION_DAYS` (por defecto `14`)
+
+En Home Assistant las opciones canónicas se llaman igual en minúsculas (`discord_enabled`, `discord_bot_token`, etc.) y se guardan en `/data/options.json`; las variables `DISCORD_*` se reservan para entornos locales. Después de modificar cualquiera de estas opciones en Home Assistant, reinicia el add-on para que recargue la configuración.
+
+Con `DISCORD_ENABLED=false`, el agente no inicia ningún planificador ni contacta Discord. Cuando está activo, solo realiza lecturas de los canales incluidos en `DISCORD_CHANNEL_IDS`; no implementa operaciones para enviar, editar, reaccionar ni borrar mensajes.
+
+Antes de invitar el bot al servidor de pruebas, activa el intent privilegiado **Message Content** en el apartado *Bot* del portal de desarrolladores de Discord. En el rol del bot concede solo `View Channel` y `Read Message History` sobre los canales que vayas a autorizar; deja sin conceder `Send Messages`, `Manage Messages` y permisos de administración. Discord devuelve el contenido de los mensajes vacío sin ese intent y exige visibilidad e historial para recuperar los mensajes del canal. Si el agente recibe cualquier mensaje no-bot sin texto legible, señala la lectura como parcial y no avanza el cursor para reintentarlo después de corregir el intent o los permisos.
+
+La primera consulta resume como máximo la ventana reciente de Discord; no recorre todo el historial anterior. Si un canal acumula un atraso superior a la ventana segura de recuperación, el agente procesa la parte más reciente, registra el aviso en el resumen y evita quedar bloqueado repitiendo la misma consulta. Los resúmenes derivados pueden contener información sensible: accede a la app mediante el ingress de Home Assistant y no expongas su puerto directamente. El acceso directo requiere siempre `JOB_SECRET`; una cabecera `X-Ingress-Path` enviada por un cliente no la sustituye.
+
+Campos obligatorios con el agente activado:
+
+- `DISCORD_BOT_TOKEN`
+- `DISCORD_OPENAI_API_KEY`
+- `DISCORD_CHANNEL_IDS`
+
 ### Agente respuestas (`answers_agent`)
 
 - `ANSWERS_DATA_DIR` (por defecto `/data/answers_agent`; persistencia de conversaciones/estado)
@@ -162,13 +189,13 @@ Modo desarrollo con recarga automática al detectar cambios:
 Alternativa equivalente (sin script):
 
 ```bash
-python -m uvicorn main:APP --host 0.0.0.0 --port 8099 --reload
+python -m uvicorn main:APP --host 0.0.0.0 --port 8099 --reload --no-proxy-headers
 ```
 
 Modo normal (sin autoreload):
 
 ```bash
-python -m uvicorn main:APP --host 0.0.0.0 --port 8099
+python -m uvicorn main:APP --host 0.0.0.0 --port 8099 --no-proxy-headers
 ```
 
 ## Endpoints
@@ -215,7 +242,7 @@ Notas:
 
 Control de acceso básico:
 
-- Si `JOB_SECRET` está definido, los endpoints protegidos exigen secreto.
+- El ingress de Home Assistant se acepta solo desde su proxy interno documentado (`172.30.32.2`); fuera del ingress, los endpoints protegidos siempre exigen `JOB_SECRET`. El despliegue debe conservar esa IP de par TCP y no confiar en `X-Forwarded-For` enviado por clientes.
 - Se acepta por header `X-Job-Secret` o por query string `?secret=...`.
 - En `POST /run/{job_name}` también se acepta en body JSON como `payload.secret` (retrocompatibilidad).
 
@@ -226,6 +253,15 @@ Control de acceso básico:
 - `POST /issue-agent/generate`
 - `POST /issue-agent/submit`
 - `POST /issue-agent/report`
+
+### Agente Discord
+
+- `GET /discord-agent/status`
+- `POST /discord-agent/poll`
+- `GET /discord-agent/summaries`
+- `GET /discord-agent/summaries/{summary_id}`
+
+`POST /discord-agent/poll` permite probar manualmente un ciclo de lectura. La UI solo puede trasladar una tarea candidata al formulario de Issues; crear o enviar un issue siempre requiere la revisión manual existente.
 
 Notas:
 

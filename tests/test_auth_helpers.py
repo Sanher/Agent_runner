@@ -19,6 +19,7 @@ def make_request(
     path: str = "/test",
     headers: dict[str, str] | None = None,
     query: str = "",
+    client_host: str = "127.0.0.1",
 ) -> Request:
     raw_headers = []
     for key, value in (headers or {}).items():
@@ -31,7 +32,7 @@ def make_request(
         "path": path,
         "query_string": query.encode("latin-1"),
         "headers": raw_headers,
-        "client": ("127.0.0.1", 12345),
+        "client": (client_host, 12345),
         "server": ("testserver", 80),
     }
     return Request(scope)
@@ -69,9 +70,74 @@ class AuthHelpersTests(unittest.TestCase):
             ensure_request_authorized(req, "correct", self.logger)
         self.assertEqual(ctx.exception.status_code, 401)
 
-    def test_ensure_request_authorized_proxy_bypass(self) -> None:
-        req = make_request(headers={"x-ingress-path": "/ingress/test"})
+    def test_ensure_request_authorized_accepts_non_ascii_secret(self) -> None:
+        req = make_request(headers={"x-job-secret": "señal"})
+
+        source = ensure_request_authorized(req, "señal", self.logger)
+
+        self.assertEqual(source, "header")
+
+    def test_ensure_request_authorized_rejects_wrong_non_ascii_secret(self) -> None:
+        req = make_request(headers={"x-job-secret": "señal"})
+
+        with self.assertRaises(HTTPException) as ctx:
+            ensure_request_authorized(req, "contraseña", self.logger)
+
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_ensure_request_authorized_rejects_malformed_unicode_secret(self) -> None:
+        req = make_request()
+
+        with self.assertRaises(HTTPException) as ctx:
+            ensure_request_authorized(req, "correct", self.logger, body_secret="\ud800")
+
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_ensure_request_authorized_trusted_ingress_bypass(self) -> None:
+        req = make_request(
+            headers={"x-ingress-path": "/ingress/test"},
+            client_host="172.30.32.2",
+        )
         source = ensure_request_authorized(req, "correct", self.logger)
+        self.assertEqual(source, "ingress")
+
+    def test_ensure_request_authorized_rejects_untrusted_ingress_header(self) -> None:
+        req = make_request(headers={"x-ingress-path": "/ingress/test"})
+        with self.assertRaises(HTTPException) as ctx:
+            ensure_request_authorized(req, "correct", self.logger)
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_ensure_request_authorized_ignores_forwarded_client_headers(self) -> None:
+        req = make_request(
+            headers={
+                "x-ingress-path": "/ingress/test",
+                "x-forwarded-for": "172.30.32.2",
+            }
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            ensure_request_authorized(req, "correct", self.logger)
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_ensure_request_authorized_allows_a_valid_direct_secret_after_rejecting_header(self) -> None:
+        req = make_request(
+            headers={"x-ingress-path": "/ingress/test"},
+            query="secret=correct",
+        )
+        source = ensure_request_authorized(req, "correct", self.logger)
+        self.assertEqual(source, "query")
+
+    def test_ensure_request_authorized_requires_secret_outside_ingress(self) -> None:
+        req = make_request()
+        with self.assertRaises(HTTPException) as ctx:
+            ensure_request_authorized(req, "", self.logger)
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_ensure_request_authorized_allows_trusted_ingress_without_secret(self) -> None:
+        req = make_request(
+            headers={"x-ingress-path": "/ingress/test"},
+            client_host="172.30.32.2",
+        )
+        source = ensure_request_authorized(req, "", self.logger)
         self.assertEqual(source, "ingress")
 
 
