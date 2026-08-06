@@ -126,7 +126,11 @@ Con `DISCORD_ENABLED=false`, el agente no inicia ningún planificador ni contact
 
 Antes de invitar el bot al servidor de pruebas, activa el intent privilegiado **Message Content** en el apartado *Bot* del portal de desarrolladores de Discord. En el rol del bot concede solo `View Channel` y `Read Message History` sobre los canales que vayas a autorizar; deja sin conceder `Send Messages`, `Manage Messages` y permisos de administración. Discord devuelve el contenido de los mensajes vacío sin ese intent y exige visibilidad e historial para recuperar los mensajes del canal. Si el agente recibe cualquier mensaje no-bot sin texto legible, señala la lectura como parcial y no avanza el cursor para reintentarlo después de corregir el intent o los permisos.
 
-La primera consulta resume como máximo la ventana reciente de Discord; no recorre todo el historial anterior. Si un canal acumula un atraso superior a la ventana segura de recuperación, el agente procesa la parte más reciente, registra el aviso en el resumen y evita quedar bloqueado repitiendo la misma consulta. Los resúmenes derivados pueden contener información sensible: accede a la app mediante el ingress de Home Assistant y no expongas su puerto directamente. El acceso directo requiere siempre `JOB_SECRET`; una cabecera `X-Ingress-Path` enviada por un cliente no la sustituye.
+Al añadir un canal nuevo, el primer ciclo fija un punto de inicio **desde ahora** con una lectura mínima del identificador del último mensaje. No crea un resumen ni envía el contenido anterior a OpenAI; a partir de ese punto solo procesa mensajes posteriores. La UI también permite iniciar ese punto de forma explícita. Si el canal estaba vacío, el marcador se conserva igualmente para que su primer mensaje futuro no active una lectura retrospectiva.
+
+Cuando haya trabajo concreto, pendiente y respaldado por mensajes, la IA puede separar incidencias independientes en varias sugerencias de tipo `bug` o `task`. Los mensajes informativos, pruebas, duplicados, elementos resueltos y conversaciones sin acción no deben generar una sugerencia. Toda clasificación requiere revisión humana: cada tarjeta puede trasladarse solo como borrador al formulario de Issues o descartarse localmente con motivo (`created`, `duplicate`, `not_actionable` u `other`). El descarte es reversible mientras el resumen se conserve; no crea, envía ni modifica ningún issue ni mensaje de Discord.
+
+Si un canal acumula un atraso superior a la ventana segura de recuperación después de su punto de inicio, el agente procesa la parte más reciente, registra el aviso en el resumen y evita quedar bloqueado repitiendo la misma consulta. Los resúmenes derivados pueden contener información sensible: accede a la app mediante el ingress de Home Assistant y no expongas su puerto directamente. El acceso directo requiere siempre `JOB_SECRET`; una cabecera `X-Ingress-Path` enviada por un cliente no la sustituye.
 
 Campos obligatorios con el agente activado:
 
@@ -258,10 +262,13 @@ Control de acceso básico:
 
 - `GET /discord-agent/status`
 - `POST /discord-agent/poll`
+- `POST /discord-agent/channels/{channel_id}/baseline`
 - `GET /discord-agent/summaries`
 - `GET /discord-agent/summaries/{summary_id}`
+- `POST /discord-agent/summaries/{summary_id}/tasks/{task_key}/dismiss`
+- `DELETE /discord-agent/summaries/{summary_id}/tasks/{task_key}/dismiss`
 
-`POST /discord-agent/poll` permite probar manualmente un ciclo de lectura. La UI solo puede trasladar una tarea candidata al formulario de Issues; crear o enviar un issue siempre requiere la revisión manual existente.
+`POST /discord-agent/poll` permite probar manualmente un ciclo de lectura; para un canal sin punto de inicio, ese ciclo lo establece sin resumir contenido anterior. La UI solo puede trasladar una tarea candidata al formulario de Issues; crear o enviar un issue siempre requiere la revisión manual existente. Los endpoints de descarte solo guardan una decisión local de revisión y siguen requiriendo autenticación incluso si la integración queda desactivada (`JOB_SECRET` en acceso directo).
 
 Notas:
 

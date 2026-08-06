@@ -2598,7 +2598,9 @@ def create_ui_router(job_secret: str) -> APIRouter:
     #tabDiscord .discord-status-grid,
     #tabDiscord .discord-summary-meta,
     #tabDiscord .discord-task-meta,
-    #tabDiscord .discord-task-list {
+    #tabDiscord .discord-task-list,
+    #tabDiscord .discord-baseline-actions,
+    #tabDiscord .discord-task-actions {
       display: flex;
       flex-wrap: wrap;
       gap: 10px;
@@ -2631,6 +2633,37 @@ def create_ui_router(job_secret: str) -> APIRouter:
 
     #tabDiscord .discord-status-card {
       padding: 16px;
+    }
+
+    #tabDiscord .discord-baseline-card {
+      padding: 16px;
+      grid-column: 1 / -1;
+    }
+
+    #tabDiscord .discord-baseline-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    #tabDiscord .discord-baseline-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.018);
+    }
+
+    #tabDiscord .discord-baseline-item p {
+      margin: 4px 0 0;
+    }
+
+    #tabDiscord .discord-baseline-actions {
+      justify-content: flex-end;
+      flex: 0 0 auto;
     }
 
     #tabDiscord .discord-status-label,
@@ -2730,6 +2763,27 @@ def create_ui_router(job_secret: str) -> APIRouter:
       margin-top: 14px;
     }
 
+    #tabDiscord .discord-task-actions {
+      justify-content: flex-end;
+      align-items: center;
+    }
+
+    #tabDiscord .discord-task-dismiss-select {
+      min-width: 154px;
+      margin: 0;
+    }
+
+    #tabDiscord .discord-task-card.is-dismissed {
+      border-color: rgba(255, 255, 255, 0.05);
+      opacity: 0.72;
+    }
+
+    #tabDiscord .discord-task-dismissed-note {
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
     #tabDiscord .discord-task-evidence {
       color: var(--muted);
       font-size: 0.78rem;
@@ -2811,7 +2865,8 @@ def create_ui_router(job_secret: str) -> APIRouter:
       #tabDiscord .discord-toolbar,
       #tabDiscord .discord-summary-head,
       #tabDiscord .discord-task-head,
-      #tabDiscord .discord-task-footer {
+      #tabDiscord .discord-task-footer,
+      #tabDiscord .discord-baseline-item {
         flex-direction: column;
         align-items: stretch;
       }
@@ -2927,7 +2982,12 @@ def create_ui_router(job_secret: str) -> APIRouter:
       }
       #tabDiscord .discord-toolbar-actions,
       #tabDiscord .discord-toolbar-actions button,
-      #tabDiscord .discord-task-footer button {
+      #tabDiscord .discord-task-footer button,
+      #tabDiscord .discord-baseline-actions,
+      #tabDiscord .discord-baseline-actions button,
+      #tabDiscord .discord-task-actions,
+      #tabDiscord .discord-task-actions button,
+      #tabDiscord .discord-task-dismiss-select {
         width: 100%;
       }
     }
@@ -3400,6 +3460,7 @@ def create_ui_router(job_secret: str) -> APIRouter:
       </div>
       <div class=\"discord-toolbar-actions\">
         <button id=\"discordPollBtn\" onclick=\"pollDiscordNow()\" disabled>Consultar ahora</button>
+        <button id=\"discordDismissedToggleBtn\" onclick=\"toggleDiscordDismissedTasks()\" class=\"ghost-btn\" aria-pressed=\"false\">Mostrar descartadas</button>
         <button onclick=\"loadDiscordPanel()\" class=\"ghost-btn\">Actualizar</button>
       </div>
     </div>
@@ -3414,6 +3475,12 @@ def create_ui_router(job_secret: str) -> APIRouter:
         <div class=\"discord-status-label\">Resumen</div>
         <div id=\"discordSummaryStatus\" class=\"discord-status-value\">Cargando resúmenes...</div>
         <p class=\"muted discord-status-detail\">Las tareas se preparan para revisión humana antes de generar un borrador de issue.</p>
+      </div>
+      <div class=\"card discord-status-card discord-baseline-card\">
+        <div class=\"discord-status-label\">Inicio de vigilancia</div>
+        <div id=\"discordBaselineList\" class=\"discord-baseline-list\" aria-live=\"polite\">
+          <p class=\"muted\">Cargando el estado de inicio de los canales autorizados...</p>
+        </div>
       </div>
     </div>
 
@@ -3491,6 +3558,8 @@ let workdayTickerSnapshot = null;
 let workdaySavedReducedStartDate = '';
 let workdaySavedReducedEndDate = '';
 let answersArchivedVisible = false;
+let discordShowDismissedTasks = false;
+let discordLatestSummaries = [];
 let emailReviewedVisible = false;
 let statusDismissTimer = null;
 let issuePlaywrightLogLines = [];
@@ -5388,6 +5457,114 @@ function discordConfigurationComplete(status) {
   return !Array.isArray(status?.missing_required_config) || status.missing_required_config.length === 0;
 }
 
+function discordStatusChannels(status) {
+  const rawChannels = status?.channels ?? status?.channel_statuses ?? status?.channel_states;
+  if (Array.isArray(rawChannels)) {
+    return rawChannels
+      .map((channel) => typeof channel === 'string' ? {channel_id: channel} : channel)
+      .filter((channel) => discordText(channel?.channel_id || channel?.id));
+  }
+  if (rawChannels && typeof rawChannels === 'object') {
+    return Object.entries(rawChannels)
+      .map(([channelId, state]) => {
+        const details = state && typeof state === 'object' ? state : {};
+        return {
+          ...details,
+          channel_id: discordText(details.channel_id || details.id || channelId),
+          baseline_status: discordText(
+            details.baseline_status || (typeof state === 'string' ? state : '')
+          ),
+        };
+      })
+      .filter((channel) => channel.channel_id);
+  }
+  return discordStringList(status?.channel_ids || status?.configured_channel_ids)
+    .map((channelId) => ({channel_id: channelId}));
+}
+
+function discordChannelBaselineStatus(channel) {
+  const value = discordText(
+    channel?.baseline_status || channel?.baseline || channel?.initialization_status
+  ).toLowerCase();
+  if (['initialized', 'active', 'watching', 'ready', 'baseline_set'].includes(value)) return 'initialized';
+  if (['pending', 'uninitialized', 'needs_baseline', 'missing'].includes(value)) return 'pending';
+  if (channel?.has_cursor === true || channel?.cursor_initialized === true || discordText(channel?.last_message_id)) {
+    return 'initialized';
+  }
+  return 'pending';
+}
+
+function discordChannelBaselineAt(channel) {
+  return discordText(
+    channel?.baseline_at || channel?.baseline_set_at || channel?.initialized_at || channel?.cursor_set_at
+  );
+}
+
+function discordBaselineSourceLabel(source) {
+  const labels = {
+    automatic: 'inicio automático',
+    manual: 'inicio manual',
+    legacy_cursor: 'cursor existente',
+    legacy: 'estado anterior',
+  };
+  return labels[discordText(source).toLowerCase()] || '';
+}
+
+function renderDiscordBaselineStatus(status, controlsEnabled) {
+  const list = document.getElementById('discordBaselineList');
+  if (!list) return;
+  const channels = discordStatusChannels(status);
+  list.replaceChildren();
+
+  if (!channels.length) {
+    list.appendChild(createDiscordElement(
+      'p',
+      'muted',
+      controlsEnabled
+        ? 'No se han recibido canales autorizados para iniciar la vigilancia.'
+        : 'Completa y activa la configuración de Discord para ver los canales autorizados.'
+    ));
+    return;
+  }
+
+  channels.forEach((channel) => {
+    const channelId = discordText(channel?.channel_id || channel?.id);
+    if (!channelId) return;
+    const initialized = discordChannelBaselineStatus(channel) === 'initialized';
+    const item = createDiscordElement('div', 'discord-baseline-item');
+    const copy = createDiscordElement('div', 'discord-baseline-copy');
+    copy.appendChild(createDiscordElement('strong', '', `Canal ${channelId}`));
+    const baselineAt = discordChannelBaselineAt(channel);
+    const source = discordBaselineSourceLabel(channel?.baseline_source);
+    const initializedDetail = baselineAt
+      ? `La vigilancia está activa desde ${formatTs(baselineAt)}${source ? ` (${source})` : ''}.`
+      : 'La vigilancia está activa; solo se procesarán mensajes posteriores al punto de inicio.';
+    copy.appendChild(createDiscordElement(
+      'p',
+      'muted',
+      initialized
+        ? initializedDetail
+        : 'Aún no se ha iniciado la vigilancia. “Empezar desde ahora” fija el punto de inicio sin resumir mensajes anteriores.'
+    ));
+    item.appendChild(copy);
+
+    const actions = createDiscordElement('div', 'discord-baseline-actions');
+    actions.appendChild(createDiscordMetaPill(initialized ? 'Vigilando desde ahora' : 'Pendiente de inicio'));
+    if (!initialized) {
+      const baselineButton = createDiscordElement('button', '', 'Empezar desde ahora');
+      baselineButton.type = 'button';
+      baselineButton.disabled = !controlsEnabled;
+      baselineButton.title = baselineButton.disabled
+        ? 'Completa y activa la configuración de Discord antes de iniciar la vigilancia.'
+        : 'Fija el punto de inicio actual sin resumir mensajes anteriores.';
+      baselineButton.addEventListener('click', () => baselineDiscordChannel(channelId, baselineButton));
+      actions.appendChild(baselineButton);
+    }
+    item.appendChild(actions);
+    list.appendChild(item);
+  });
+}
+
 function renderDiscordStatus(status) {
   const line = document.getElementById('discordStatusLine');
   const detail = document.getElementById('discordStatusDetail');
@@ -5398,6 +5575,8 @@ function renderDiscordStatus(status) {
   const configured = discordConfigurationComplete(status);
   const serviceOk = status?.ok !== false;
   const message = discordApiError(status, 'Sin información adicional.');
+  const pendingChannels = discordStatusChannels(status)
+    .filter((channel) => discordChannelBaselineStatus(channel) === 'pending');
 
   if (!enabled) {
     line.innerText = 'Discord está desactivado.';
@@ -5417,16 +5596,20 @@ function renderDiscordStatus(status) {
     setSidebarBadge('tabDiscordBadge', 'Error', 'danger');
   } else {
     line.innerText = 'Discord está listo para consultar.';
-    detail.innerText = message === 'Sin información adicional.'
-      ? 'Solo se leen los canales autorizados; el bot no puede publicar mensajes.'
-      : message;
+    detail.innerText = message !== 'Sin información adicional.'
+      ? message
+      : pendingChannels.length
+        ? `${pendingChannels.length} ${pendingChannels.length === 1 ? 'canal está pendiente' : 'canales están pendientes'} de inicio. Puedes empezar desde ahora o consultar: no se resumirá el historial anterior.`
+        : 'Solo se leen los canales autorizados; el bot no puede publicar mensajes.';
     setSidebarBadge('tabDiscordBadge', 'Listo', 'success');
   }
 
-  pollButton.disabled = !enabled || !configured;
+  const controlsEnabled = enabled && configured && serviceOk;
+  pollButton.disabled = !controlsEnabled;
   pollButton.title = pollButton.disabled
     ? 'Completa y activa la configuración de Discord antes de consultar.'
     : 'Consultar mensajes nuevos y generar resúmenes si procede.';
+  renderDiscordBaselineStatus(status, controlsEnabled);
 }
 
 function renderDiscordStatusError(error) {
@@ -5436,6 +5619,14 @@ function renderDiscordStatusError(error) {
   if (line) line.innerText = 'No se pudo cargar el estado de Discord.';
   if (detail) detail.innerText = `Error: ${discordText(error, 'sin detalle')}`;
   if (pollButton) pollButton.disabled = true;
+  const baselineList = document.getElementById('discordBaselineList');
+  if (baselineList) {
+    baselineList.replaceChildren(createDiscordElement(
+      'p',
+      'muted',
+      'No se pudo cargar el estado de inicio de los canales autorizados.'
+    ));
+  }
   setSidebarBadge('tabDiscordBadge', 'Error', 'danger');
 }
 
@@ -5444,6 +5635,135 @@ function createDiscordElement(tagName, className, text) {
   if (className) element.className = className;
   if (text !== undefined && text !== null) element.textContent = String(text);
   return element;
+}
+
+function discordSummaryId(summary) {
+  return discordText(summary?.summary_id || summary?.id);
+}
+
+function discordTaskKey(task) {
+  return discordText(task?.task_key || task?.key);
+}
+
+function discordTaskDismissal(task) {
+  const review = task?.review && typeof task.review === 'object' ? task.review : {};
+  const dismissed = task?.dismissed === true || review?.dismissed === true || task?.status === 'dismissed';
+  return {
+    dismissed,
+    reason: discordText(task?.dismissed_reason || review?.dismissed_reason || review?.reason),
+  };
+}
+
+function discordDismissReasonLabel(reason) {
+  const labels = {
+    created: 'Creada',
+    duplicate: 'Duplicada',
+    not_actionable: 'No es una incidencia',
+    other: 'Otro motivo',
+  };
+  return labels[discordText(reason).toLowerCase()] || 'Sin motivo indicado';
+}
+
+function discordTaskDismissPath(task, summary) {
+  const summaryId = discordSummaryId(summary);
+  const taskKey = discordTaskKey(task);
+  if (!summaryId || !taskKey) return '';
+  return `/summaries/${encodeURIComponent(summaryId)}/tasks/${encodeURIComponent(taskKey)}/dismiss`;
+}
+
+async function baselineDiscordChannel(channelId, button) {
+  const normalizedChannelId = discordText(channelId);
+  if (!normalizedChannelId || !button || button.disabled) return;
+  const originalText = button.innerText;
+  button.disabled = true;
+  button.innerText = 'Iniciando...';
+  try {
+    const response = await fetch(
+      withDiscordSecret(`/channels/${encodeURIComponent(normalizedChannelId)}/baseline`),
+      {method: 'POST'}
+    );
+    const data = await readApiPayload(response);
+    if (!response.ok || data?.ok === false) {
+      throw new Error(discordApiError(data, `HTTP ${response.status}`));
+    }
+    const initializedAt = discordText(data?.result?.baseline_at);
+    setStatus(
+      initializedAt
+        ? `Vigilancia de Discord iniciada desde ${formatTs(initializedAt)}. No se resumieron mensajes anteriores.`
+        : 'Vigilancia de Discord iniciada desde ahora. No se resumieron mensajes anteriores.'
+    );
+  } catch (error) {
+    setStatus(`Error al iniciar la vigilancia de Discord: ${discordText(error, 'sin detalle')}`);
+  } finally {
+    button.innerText = originalText;
+    await loadDiscordPanel();
+  }
+}
+
+async function dismissDiscordTask(task, summary, reason, button, reasonSelect) {
+  const endpoint = discordTaskDismissPath(task, summary);
+  if (!endpoint) {
+    setStatus('No se puede descartar esta tarea porque falta su identificador persistente. Actualiza los resúmenes e inténtalo de nuevo.');
+    return;
+  }
+  const normalizedReason = discordText(reason, 'other').toLowerCase();
+  const originalText = button?.innerText || 'Descartar';
+  if (button) {
+    button.disabled = true;
+    button.innerText = 'Descartando...';
+  }
+  if (reasonSelect) reasonSelect.disabled = true;
+  try {
+    const response = await fetch(withDiscordSecret(endpoint), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({reason: normalizedReason}),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || data?.ok === false) {
+      throw new Error(discordApiError(data, `HTTP ${response.status}`));
+    }
+    const persistedReason = discordText(data?.result?.dismissed_reason, normalizedReason);
+    setStatus(`Tarea de Discord descartada: ${discordDismissReasonLabel(persistedReason)}.`);
+  } catch (error) {
+    setStatus(`Error al descartar la tarea de Discord: ${discordText(error, 'sin detalle')}`);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerText = originalText;
+    }
+    if (reasonSelect) reasonSelect.disabled = false;
+    await loadDiscordSummaries();
+  }
+}
+
+async function restoreDiscordTask(task, summary, button) {
+  const endpoint = discordTaskDismissPath(task, summary);
+  if (!endpoint) {
+    setStatus('No se puede restaurar esta tarea porque falta su identificador persistente. Actualiza los resúmenes e inténtalo de nuevo.');
+    return;
+  }
+  const originalText = button?.innerText || 'Restaurar';
+  if (button) {
+    button.disabled = true;
+    button.innerText = 'Restaurando...';
+  }
+  try {
+    const response = await fetch(withDiscordSecret(endpoint), {method: 'DELETE'});
+    const data = await readApiPayload(response);
+    if (!response.ok || data?.ok === false) {
+      throw new Error(discordApiError(data, `HTTP ${response.status}`));
+    }
+    setStatus('Tarea de Discord restaurada para revisión.');
+  } catch (error) {
+    setStatus(`Error al restaurar la tarea de Discord: ${discordText(error, 'sin detalle')}`);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerText = originalText;
+    }
+    await loadDiscordSummaries();
+  }
 }
 
 function appendDiscordListSection(parent, title, values, emptyText) {
@@ -5515,6 +5835,8 @@ function transferDiscordTaskToIssues(task, summary) {
 
 function renderDiscordTask(task, summary) {
   const card = createDiscordElement('article', 'discord-task-card');
+  const dismissal = discordTaskDismissal(task);
+  if (dismissal.dismissed) card.classList.add('is-dismissed');
   const head = createDiscordElement('div', 'discord-task-head');
   const copy = createDiscordElement('div', 'discord-task-copy');
   copy.appendChild(createDiscordElement('h5', 'discord-task-title', discordText(task?.title, 'Tarea sin título')));
@@ -5544,12 +5866,92 @@ function renderDiscordTask(task, summary) {
     'discord-task-evidence',
     evidenceIds.length ? `Evidencia: ${evidenceIds.join(', ')}` : 'Sin IDs de evidencia disponibles.'
   ));
-  const transferButton = createDiscordElement('button', '', 'Llevar a Issues');
-  transferButton.type = 'button';
-  transferButton.addEventListener('click', () => transferDiscordTaskToIssues(task, summary));
-  footer.appendChild(transferButton);
+  const actions = createDiscordElement('div', 'discord-task-actions');
+  if (dismissal.dismissed) {
+    card.appendChild(createDiscordElement(
+      'p',
+      'discord-task-dismissed-note',
+      `Descartada: ${discordDismissReasonLabel(dismissal.reason)}.`
+    ));
+    const restoreButton = createDiscordElement('button', 'ghost-btn', 'Restaurar');
+    restoreButton.type = 'button';
+    restoreButton.addEventListener('click', () => restoreDiscordTask(task, summary, restoreButton));
+    actions.appendChild(restoreButton);
+  } else {
+    const transferButton = createDiscordElement('button', '', 'Llevar a Issues');
+    transferButton.type = 'button';
+    transferButton.addEventListener('click', () => transferDiscordTaskToIssues(task, summary));
+    actions.appendChild(transferButton);
+
+    const taskDismissPath = discordTaskDismissPath(task, summary);
+    const dismissReason = document.createElement('select');
+    dismissReason.className = 'discord-task-dismiss-select';
+    dismissReason.setAttribute('aria-label', 'Motivo para descartar la tarea');
+    dismissReason.disabled = !taskDismissPath;
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Elige un motivo';
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    dismissReason.appendChild(placeholder);
+    [
+      ['created', 'Creada'],
+      ['duplicate', 'Duplicada'],
+      ['not_actionable', 'No es una incidencia'],
+      ['other', 'Otro motivo'],
+    ].forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      dismissReason.appendChild(option);
+    });
+    actions.appendChild(dismissReason);
+
+    const dismissButton = createDiscordElement('button', 'ghost-btn', 'Descartar');
+    dismissButton.type = 'button';
+    const updateDismissButton = () => {
+      const hasPersistentKey = Boolean(taskDismissPath);
+      const hasReason = Boolean(discordText(dismissReason.value));
+      dismissButton.disabled = !hasPersistentKey || !hasReason;
+      dismissButton.title = !hasPersistentKey
+        ? 'Falta el identificador persistente de esta tarea. Actualiza los resúmenes para descartarla.'
+        : !hasReason
+          ? 'Elige un motivo antes de descartar la tarea.'
+          : 'Oculta esta tarea de la revisión activa y guarda el motivo.';
+    };
+    dismissReason.addEventListener('change', updateDismissButton);
+    updateDismissButton();
+    dismissButton.addEventListener('click', () => {
+      dismissDiscordTask(task, summary, dismissReason.value, dismissButton, dismissReason);
+    });
+    actions.appendChild(dismissButton);
+  }
+  footer.appendChild(actions);
   card.appendChild(footer);
   return card;
+}
+
+function updateDiscordDismissedToggle(dismissedTaskCount) {
+  const button = document.getElementById('discordDismissedToggleBtn');
+  if (!button) return;
+  const hasDismissedTasks = dismissedTaskCount > 0;
+  button.disabled = !hasDismissedTasks;
+  button.setAttribute('aria-pressed', discordShowDismissedTasks ? 'true' : 'false');
+  button.innerText = discordShowDismissedTasks ? 'Ocultar descartadas' : 'Mostrar descartadas';
+  button.title = hasDismissedTasks
+    ? 'Muestra u oculta las tareas descartadas para poder restaurarlas.'
+    : 'No hay tareas descartadas.';
+}
+
+function toggleDiscordDismissedTasks() {
+  if (!discordLatestSummaries.length) return;
+  const dismissedTaskCount = discordLatestSummaries.reduce((total, summary) => {
+    const tasks = Array.isArray(summary?.suggested_tasks) ? summary.suggested_tasks : [];
+    return total + tasks.filter((task) => discordTaskDismissal(task).dismissed).length;
+  }, 0);
+  if (!dismissedTaskCount) return;
+  discordShowDismissedTasks = !discordShowDismissedTasks;
+  renderDiscordSummaries(discordLatestSummaries);
 }
 
 function renderDiscordSummaries(items) {
@@ -5558,6 +5960,13 @@ function renderDiscordSummaries(items) {
   if (!list || !summaryStatus) return;
 
   const summaries = Array.isArray(items) ? items : [];
+  discordLatestSummaries = summaries;
+  const dismissedTaskCount = summaries.reduce((total, summary) => {
+    const tasks = Array.isArray(summary?.suggested_tasks) ? summary.suggested_tasks : [];
+    return total + tasks.filter((task) => discordTaskDismissal(task).dismissed).length;
+  }, 0);
+  if (!dismissedTaskCount) discordShowDismissedTasks = false;
+  updateDiscordDismissedToggle(dismissedTaskCount);
   list.replaceChildren();
   summaryStatus.innerText = summaries.length
     ? `${summaries.length} ${summaries.length === 1 ? 'resumen disponible' : 'resúmenes disponibles'}.`
@@ -5582,11 +5991,23 @@ function renderDiscordSummaries(items) {
       channelIds.length ? `Canales: ${channelIds.join(', ')}` : 'Canal no indicado.'
     ));
     const tasks = Array.isArray(summary?.suggested_tasks) ? summary.suggested_tasks : [];
+    const visibleTasks = discordShowDismissedTasks
+      ? tasks
+      : tasks.filter((task) => !discordTaskDismissal(task).dismissed);
+    const summaryDismissedTaskCount = tasks.filter(
+      (task) => discordTaskDismissal(task).dismissed
+    ).length;
     const meta = createDiscordElement('div', 'discord-summary-meta');
     meta.appendChild(createDiscordMetaPill(`${Number(summary?.message_count || 0)} mensajes`));
     meta.appendChild(createDiscordMetaPill(`${tasks.length} tareas sugeridas`));
+    if (summaryDismissedTaskCount) {
+      meta.appendChild(createDiscordMetaPill(`${summaryDismissedTaskCount} descartadas`));
+    }
     if (summary?.collection_scope === 'initial_recent_window') {
       meta.appendChild(createDiscordMetaPill('Primera lectura: ventana reciente'));
+    }
+    if (summary?.collection_scope === 'since_baseline') {
+      meta.appendChild(createDiscordMetaPill('Desde el inicio de vigilancia'));
     }
     if (summary?.backlog_truncated) {
       meta.appendChild(createDiscordMetaPill('Atraso recortado'));
@@ -5599,6 +6020,13 @@ function renderDiscordSummaries(items) {
         'p',
         'muted',
         'El atraso superaba la ventana segura de consulta: este resumen cubre los mensajes más recientes y puede omitir mensajes pendientes más antiguos.'
+      ));
+    }
+    if (summary?.collection_scope === 'since_baseline') {
+      card.appendChild(createDiscordElement(
+        'p',
+        'muted',
+        'Inicio desde ahora: este resumen incluye solo mensajes posteriores al punto de inicio fijado para el canal; no se incluyó historial previo.'
       ));
     } else if (summary?.collection_scope === 'initial_recent_window') {
       card.appendChild(createDiscordElement(
@@ -5614,10 +6042,16 @@ function renderDiscordSummaries(items) {
     tasksSection.appendChild(createDiscordElement('h5', '', 'Tareas sugeridas'));
     if (!tasks.length) {
       tasksSection.appendChild(createDiscordElement('p', 'muted', 'No hay tareas propuestas en este resumen.'));
+    } else if (!visibleTasks.length) {
+      tasksSection.appendChild(createDiscordElement(
+        'p',
+        'muted',
+        'Todas las tareas de este resumen se han descartado. Usa “Mostrar descartadas” para revisarlas o restaurarlas.'
+      ));
     } else {
       const taskList = createDiscordElement('div', 'discord-task-list');
       // El contenido de Discord no es fiable: se añade como texto y solo se precarga para revisión humana.
-      tasks.forEach((task) => taskList.appendChild(renderDiscordTask(task, summary)));
+      visibleTasks.forEach((task) => taskList.appendChild(renderDiscordTask(task, summary)));
       tasksSection.appendChild(taskList);
     }
     card.appendChild(tasksSection);
@@ -5693,7 +6127,14 @@ async function pollDiscordNow() {
           : 'Consulta de Discord completada con avisos. Revisa los resúmenes.'
       );
     } else {
-      setStatus('Consulta de Discord completada. Revisa los resúmenes y las tareas sugeridas.');
+      const initializedChannels = Array.isArray(data?.result?.channels)
+        ? data.result.channels.filter((channel) => channel?.status === 'baseline_initialized')
+        : [];
+      setStatus(
+        initializedChannels.length
+          ? `${initializedChannels.length} ${initializedChannels.length === 1 ? 'canal ha iniciado' : 'canales han iniciado'} la vigilancia desde ahora; no se resumió historial anterior.`
+          : 'Consulta de Discord completada. Revisa los resúmenes y las tareas sugeridas.'
+      );
     }
   } catch (error) {
     setStatus(`Error al consultar Discord: ${discordText(error, 'sin detalle')}`);
