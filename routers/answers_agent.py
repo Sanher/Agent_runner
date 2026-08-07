@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, Protocol, Sequence
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -9,6 +9,7 @@ from routers.auth import ensure_request_authorized
 
 
 logger = logging.getLogger("agent_runner.answers_router")
+_UNCONFIGURED_WEBHOOK_SECRET_VALUES = frozenset({"", "false", "none", "null"})
 
 
 class SuggestChangesRequest(BaseModel):
@@ -34,14 +35,32 @@ class TelegramWebhookPayload(BaseModel):
     edited_business_message: Dict[str, Any] | None = None
 
 
+class TelegramWebhookReaderSink(Protocol):
+    """Local, atomic consumer for authenticated Telegram webhook updates.
+
+    The Answers webhook invokes this sink directly after its own work instead
+    of acknowledging an update that exists only in a lossy in-memory queue.
+    Implementations must not call Telegram or a model from this method.
+    """
+
+    def ingest_webhook_update(self, update: Dict[str, Any]) -> Dict[str, Any]:
+        """Persist or process one normalized Telegram update without replying."""
+
+
 def create_answers_router(
     service: AnswersAgentService,
     job_secret: str,
     telegram_webhook_secrets: Sequence[str] = (),
+    telegram_reader_sink: TelegramWebhookReaderSink | None = None,
 ) -> APIRouter:
     """Build HTTP router for manual moderation of answers_agent conversations."""
     router = APIRouter(tags=["answers-agent"])
     manual_router = APIRouter(prefix="/answers-agent", tags=["answers-agent"])
+
+    def configured_webhook_secret(value: Any) -> str:
+        """Return a usable webhook secret, rejecting common config placeholders."""
+        normalized = str(value or "").strip()
+        return normalized if normalized.lower() not in _UNCONFIGURED_WEBHOOK_SECRET_VALUES else ""
 
     def ensure_auth(request: Request) -> str:
         # Auth source is useful for HA diagnostics (query/header/ingress).
@@ -49,9 +68,14 @@ def create_answers_router(
 
     def ensure_telegram_webhook_auth(request: Request) -> None:
         provided = request.headers.get("x-telegram-bot-api-secret-token", "").strip()
-        accepted = [str(item or "").strip() for item in telegram_webhook_secrets if str(item or "").strip()]
-        if not accepted and getattr(service, "telegram_webhook_secret", "").strip():
-            accepted = [str(service.telegram_webhook_secret).strip()]
+        accepted = [
+            secret
+            for secret in (configured_webhook_secret(item) for item in telegram_webhook_secrets)
+            if secret
+        ]
+        fallback_secret = configured_webhook_secret(getattr(service, "telegram_webhook_secret", ""))
+        if not accepted and fallback_secret:
+            accepted = [fallback_secret]
 
         if not accepted:
             logger.error("Telegram webhook rejected: no configured secret")
@@ -63,14 +87,30 @@ def create_answers_router(
     @router.post("/answers_agent/webhook/telegram")
     def telegram_webhook(payload: TelegramWebhookPayload, request: Request):
         ensure_telegram_webhook_auth(request)
+        normalized_update = payload.model_dump(exclude_none=True)
         try:
-            return service.process_telegram_update(payload.model_dump(exclude_none=True))
+            result = service.process_telegram_update(normalized_update)
         except RuntimeError as err:
             logger.warning("Invalid Telegram webhook payload (detail=%s)", err)
             raise HTTPException(status_code=400, detail=str(err)) from err
         except Exception as err:
             logger.exception("Failure in /answers_agent/webhook/telegram")
             raise HTTPException(status_code=500, detail=str(err)) from err
+
+        if telegram_reader_sink is not None:
+            try:
+                # Keep the local persistence call direct: a queued update could
+                # be acknowledged to Telegram but lost on a process restart.
+                telegram_reader_sink.ingest_webhook_update(normalized_update)
+            except Exception as err:
+                # The intake reader is strictly optional. Keep its failure private
+                # and do not alter the existing Answers webhook response.
+                logger.warning(
+                    "Telegram reader webhook fan-out failed (error_type=%s)",
+                    type(err).__name__,
+                )
+
+        return result
 
     @manual_router.get("/chats")
     def list_chats(request: Request):

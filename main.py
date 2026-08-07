@@ -17,6 +17,7 @@ from agents.answers_agent.service import AnswersAgentService
 from agents.discord_agent.service import DiscordAgentService
 from agents.email_agent.service import EmailAgentService
 from agents.issue_agent.service import IssueAgentService
+from agents.telegram_reader.service import TelegramReaderService
 from agents.support_guidance import (
     DEFAULT_SUPPORT_MARKETING_URL,
     DEFAULT_SUPPORT_TELEGRAM_URL,
@@ -27,6 +28,7 @@ from routers.answers_agent import create_answers_router
 from routers.discord_agent import create_discord_router
 from routers.email_agent import create_email_router
 from routers.issue_agent import create_issue_router
+from routers.telegram_reader import create_telegram_reader_router
 from routers.ui import create_ui_router
 from routers.workday_agent import create_workday_router
 
@@ -100,6 +102,15 @@ def _setting(name: str, default: str = "") -> str:
     return str(ADDON_OPTIONS.get(name.lower(), default))
 
 
+_UNCONFIGURED_CREDENTIAL_PLACEHOLDERS = frozenset({"", "false", "none", "null"})
+
+
+def _is_configured_reader_credential(value: Any) -> bool:
+    """Return whether a credential is usable rather than a common placeholder."""
+    normalized = str(value or "").strip().lower()
+    return normalized not in _UNCONFIGURED_CREDENTIAL_PLACEHOLDERS
+
+
 def _setting_with_aliases(name: str, aliases: list[str], default: str = "") -> str:
     """Resuelve setting por clave principal y aliases (retrocompatibilidad)."""
     value = _setting(name, "")
@@ -112,8 +123,17 @@ def _setting_with_aliases(name: str, aliases: list[str], default: str = "") -> s
     return default
 
 
+def _setting_credential_with_aliases(name: str, aliases: list[str]) -> str:
+    """Resolve the first usable credential, ignoring placeholder values."""
+    for key in [name, *aliases]:
+        value = _setting(key, "").strip()
+        if _is_configured_reader_credential(value):
+            return value
+    return ""
+
+
 def _setting_values_with_aliases(name: str, aliases: list[str]) -> List[str]:
-    """Resuelve todos los valores no vacíos para clave principal + aliases."""
+    """Resolve usable credential values for a canonical key and its aliases."""
     keys = [name, *aliases]
     values: List[str] = []
     for key in keys:
@@ -122,7 +142,7 @@ def _setting_values_with_aliases(name: str, aliases: list[str]) -> List[str]:
             value = str(os.getenv(env_name, "")).strip()
         else:
             value = str(ADDON_OPTIONS.get(key.lower(), "")).strip()
-        if value and value not in values:
+        if _is_configured_reader_credential(value) and value not in values:
             values.append(value)
     return values
 
@@ -335,6 +355,23 @@ DISCORD_POLL_INTERVAL_MINUTES = max(1, _setting_int("discord_poll_interval_minut
 DISCORD_SUMMARY_MIN_MESSAGES = max(1, _setting_int("discord_summary_min_messages", 5))
 DISCORD_RETENTION_DAYS = max(1, _setting_int("discord_retention_days", 14))
 
+# Telegram reader (read-only chat summaries + issue suggestions).
+# The reader is a second internal consumer of the authenticated Answers
+# webhook. It deliberately reuses both the Answers Telegram delivery path and
+# the Discord OpenAI credential/model, so it never registers a second webhook
+# or needs a duplicate bot token.
+TELEGRAM_READER_ENABLED = _setting_bool("telegram_reader_enabled", False)
+TELEGRAM_READER_CHAT_IDS = _setting_string_list("telegram_reader_chat_ids")
+TELEGRAM_READER_SUMMARY_MIN_MESSAGES = max(
+    1,
+    _setting_int("telegram_reader_summary_min_messages", 5),
+)
+TELEGRAM_READER_RETENTION_DAYS = max(1, _setting_int("telegram_reader_retention_days", 14))
+TELEGRAM_READER_PROCESS_INTERVAL_SECONDS = 60
+# Retention must continue while the optional reader is disabled, so previously
+# stored private text does not become permanent after an opt-out.
+TELEGRAM_READER_RETENTION_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
+
 # Agente respuestas (Telegram)
 DEFAULT_ANSWERS_DATA_DIR = (DATA_DIR / "answers_agent").resolve()
 LEGACY_ANSWERS_DATA_DIR = (Path(__file__).resolve().parent / "answers_agent" / "data").resolve()
@@ -349,10 +386,9 @@ ANSWERS_STATE_FILE_DEFAULTS: Dict[str, Any] = {
 ANSWERS_DATA_DIR = Path(
     _setting("answers_data_dir", str(DEFAULT_ANSWERS_DATA_DIR))
 ).expanduser()
-ANSWERS_TELEGRAM_BOT_TOKEN = _setting_with_aliases(
+ANSWERS_TELEGRAM_BOT_TOKEN = _setting_credential_with_aliases(
     "answers_telegram_bot_token",
     ["telegram_bot_token"],
-    "",
 )
 ANSWERS_OPENAI_API_KEY = _setting_with_aliases(
     "answers_openai_api_key",
@@ -366,8 +402,8 @@ ANSWERS_OPENAI_MODEL = _setting_with_aliases(
 )
 ANSWERS_REQUEST_TIMEOUT_SECONDS = max(5, _setting_int("answers_request_timeout_seconds", 30))
 ANSWERS_TELEGRAM_WEBHOOK_SECRETS = _setting_values_with_aliases(
-    "telegram_wehbook_secret",
-    ["telegram_webhook_secret", "answers_webhook_secret"],
+    "answers_webhook_secret",
+    ["telegram_webhook_secret", "telegram_wehbook_secret"],
 )
 ANSWERS_TELEGRAM_WEBHOOK_SECRET = ANSWERS_TELEGRAM_WEBHOOK_SECRETS[0] if ANSWERS_TELEGRAM_WEBHOOK_SECRETS else ""
 
@@ -550,6 +586,17 @@ discord_service = DiscordAgentService(
     enabled=DISCORD_ENABLED,
 )
 
+telegram_reader_service = TelegramReaderService(
+    data_dir=DATA_DIR,
+    openai_api_key=DISCORD_OPENAI_API_KEY,
+    openai_model=DISCORD_OPENAI_MODEL,
+    chat_ids=TELEGRAM_READER_CHAT_IDS,
+    summary_min_messages=TELEGRAM_READER_SUMMARY_MIN_MESSAGES,
+    retention_days=TELEGRAM_READER_RETENTION_DAYS,
+    logger=logger.getChild("telegram_reader"),
+    enabled=TELEGRAM_READER_ENABLED,
+)
+
 answers_service = AnswersAgentService(
     data_dir=ANSWERS_DATA_DIR,
     telegram_bot_token=ANSWERS_TELEGRAM_BOT_TOKEN,
@@ -687,6 +734,53 @@ def _discord_health_payload() -> Dict[str, Any]:
         "state_path": status.get("state_path", ""),
         "summaries_path": status.get("summaries_path", ""),
         "last_poll_at": status.get("last_poll_at", ""),
+        "last_error": status.get("last_error", ""),
+    }
+
+
+def _telegram_reader_missing_required_config() -> List[str]:
+    """Return reader requirements, including its shared Answers delivery path."""
+    status = telegram_reader_service.get_status()
+    missing = list(status.get("missing_required_config", []))
+    if TELEGRAM_READER_ENABLED:
+        if not _is_configured_reader_credential(ANSWERS_TELEGRAM_BOT_TOKEN):
+            missing.append("answers_telegram_bot_token")
+        if not _is_configured_reader_credential(ANSWERS_TELEGRAM_WEBHOOK_SECRET):
+            missing.append("answers_webhook_secret")
+    return list(dict.fromkeys(missing))
+
+
+def _telegram_reader_is_ready() -> bool:
+    """Return whether the optional reader may receive webhook content."""
+    return TELEGRAM_READER_ENABLED and not _telegram_reader_missing_required_config()
+
+
+def _telegram_reader_health_payload() -> Dict[str, Any]:
+    status = telegram_reader_service.get_status()
+    missing = _telegram_reader_missing_required_config()
+    return {
+        "enabled": TELEGRAM_READER_ENABLED,
+        "delivery_mode": "answers_webhook",
+        "config_valid": len(missing) == 0,
+        "missing_required_config": missing,
+        # The OpenAI credential is intentionally shared with Discord; do not
+        # introduce, report, or persist a Telegram-specific key.
+        "has_openai_api_key": bool(status.get("has_openai_api_key")),
+        "has_openai_model": bool(DISCORD_OPENAI_MODEL),
+        "has_answers_telegram_token": _is_configured_reader_credential(
+            ANSWERS_TELEGRAM_BOT_TOKEN
+        ),
+        "has_answers_webhook_secret": _is_configured_reader_credential(
+            ANSWERS_TELEGRAM_WEBHOOK_SECRET
+        ),
+        "chat_count": len(TELEGRAM_READER_CHAT_IDS),
+        "process_interval_seconds": TELEGRAM_READER_PROCESS_INTERVAL_SECONDS,
+        "summary_min_messages": telegram_reader_service.summary_min_messages,
+        "retention_days": TELEGRAM_READER_RETENTION_DAYS,
+        "state_path": status.get("state_path", ""),
+        "summaries_path": status.get("summaries_path", ""),
+        "last_ingested_at": status.get("last_ingested_at", ""),
+        "last_processed_at": status.get("last_processed_at", ""),
         "last_error": status.get("last_error", ""),
     }
 
@@ -927,7 +1021,91 @@ def _discord_poll_loop() -> None:
         time.sleep(DISCORD_POLL_INTERVAL_MINUTES * 60)
 
 
+def _telegram_reader_summary_loop() -> None:
+    """Process locally persisted webhook intake without contacting Telegram."""
+    logger.info(
+        "Telegram-reader summary worker started (interval_seconds=%s, chat_count=%s)",
+        TELEGRAM_READER_PROCESS_INTERVAL_SECONDS,
+        len(TELEGRAM_READER_CHAT_IDS),
+    )
+    last_invalid_signature = ""
+    while True:
+        missing = _telegram_reader_missing_required_config()
+        if missing:
+            signature = ",".join(sorted(missing))
+            if signature != last_invalid_signature:
+                logger.error("Invalid Telegram-reader config. Missing: %s", signature)
+                last_invalid_signature = signature
+            time.sleep(60)
+            continue
+
+        last_invalid_signature = ""
+        try:
+            result = telegram_reader_service.process_pending_summaries()
+            if result.get("ok", True):
+                if result.get("warnings"):
+                    logger.warning(
+                        "Telegram-reader summary worker completed with coverage warnings (warnings=%s)",
+                        len(result.get("warnings", [])),
+                    )
+                elif result.get("summary_count", result.get("summaries_created", 0)):
+                    logger.info(
+                        "Telegram-reader summary worker completed (summaries=%s)",
+                        result.get("summary_count", result.get("summaries_created", 0)),
+                    )
+                else:
+                    logger.debug("Telegram-reader summary worker completed with no due summaries")
+            else:
+                logger.warning(
+                    "Telegram-reader summary worker completed with errors (errors=%s)",
+                    len(result.get("errors", [])),
+                )
+        except Exception as error:
+            logger.error(
+                "Unhandled failure in Telegram-reader summary worker (error_type=%s)",
+                type(error).__name__,
+            )
+        time.sleep(TELEGRAM_READER_PROCESS_INTERVAL_SECONDS)
+
+
+def _telegram_reader_retention_cleanup_loop() -> None:
+    """Bound local Telegram-reader retention without Telegram or OpenAI I/O."""
+    logger.info(
+        "Telegram-reader retention cleanup started (interval_seconds=%s)",
+        TELEGRAM_READER_RETENTION_CLEANUP_INTERVAL_SECONDS,
+    )
+    while True:
+        try:
+            _telegram_reader_retention_cleanup_once()
+        except Exception as error:
+            logger.error(
+                "Unhandled failure in Telegram-reader retention cleanup (error_type=%s)",
+                type(error).__name__,
+            )
+        time.sleep(TELEGRAM_READER_RETENTION_CLEANUP_INTERVAL_SECONDS)
+
+
+def _telegram_reader_retention_cleanup_once() -> Dict[str, Any]:
+    """Keep summary retention running without reopening unavailable intake."""
+    result = telegram_reader_service.cleanup_retained_data(
+        intake_ready=_telegram_reader_is_ready(),
+    )
+    if not result.get("ok", False):
+        logger.warning("Telegram-reader retention cleanup could not complete")
+    elif result.get("pending_messages_removed", 0) or result.get("summaries_removed", 0):
+        logger.info(
+            "Telegram-reader retention cleanup completed "
+            "(pending_messages_removed=%s, summaries_removed=%s)",
+            result.get("pending_messages_removed", 0),
+            result.get("summaries_removed", 0),
+        )
+    return result
+
+
 def _build_agent_modules() -> List[AgentModule]:
+    # Do not fan out raw webhook text until every shared requirement is valid.
+    # A disabled or incomplete reader must start from a fresh local boundary.
+    telegram_reader_ready = _telegram_reader_is_ready()
     return [
         AgentModule(
             name="workday_agent",
@@ -981,11 +1159,31 @@ def _build_agent_modules() -> List[AgentModule]:
             ),
         ),
         AgentModule(
+            name="telegram_reader",
+            router_factory=lambda: create_telegram_reader_router(
+                telegram_reader_service,
+                JOB_SECRET,
+                _telegram_reader_missing_required_config,
+            ),
+            health_factory=_telegram_reader_health_payload,
+            startup_tasks=(
+                ("retention_cleanup", _telegram_reader_retention_cleanup_loop),
+            )
+            + (
+                (("summary_worker", _telegram_reader_summary_loop),)
+                if telegram_reader_ready
+                else ()
+            ),
+        ),
+        AgentModule(
             name="answers_agent",
             router_factory=lambda: create_answers_router(
                 answers_service,
                 JOB_SECRET,
                 telegram_webhook_secrets=ANSWERS_TELEGRAM_WEBHOOK_SECRETS,
+                # Do not transiently copy webhook text into the optional branch
+                # until its own shared configuration is complete.
+                telegram_reader_sink=(telegram_reader_service if telegram_reader_ready else None),
             ),
             health_factory=_answers_health_payload,
         ),
@@ -997,6 +1195,37 @@ AGENT_MODULES = _build_agent_modules()
 
 @APP.on_event("startup")
 def _on_startup() -> None:
+    if _telegram_reader_is_ready():
+        try:
+            baseline = telegram_reader_service.baseline_from_now()
+            logger.info(
+                "Telegram-reader webhook boundary ready (status=%s)",
+                baseline.get("status", "unknown"),
+            )
+        except Exception as error:
+            # The reader remains optional; an inability to initialise its local
+            # boundary must never stop the Answers webhook from starting.
+            logger.error(
+                "Telegram-reader webhook boundary initialization failed (error_type=%s)",
+                type(error).__name__,
+            )
+    else:
+        try:
+            deactivation = telegram_reader_service.deactivate()
+            if not deactivation.get("ok", False):
+                logger.warning("Telegram-reader local intake could not be cleared while unavailable")
+            elif deactivation.get("pending_messages_removed", 0):
+                logger.info(
+                    "Telegram-reader unavailable; discarded pending local intake (count=%s)",
+                    deactivation["pending_messages_removed"],
+                )
+        except Exception as error:
+            # This reader is optional. Its local cleanup must not block Answers
+            # from receiving its already-authenticated Telegram webhook.
+            logger.error(
+                "Telegram-reader local intake cleanup failed (error_type=%s)",
+                type(error).__name__,
+            )
     for module in AGENT_MODULES:
         for task_name, task_target in module.startup_tasks:
             thread = threading.Thread(

@@ -14,6 +14,9 @@ Servicio Python (FastAPI + Playwright) para ejecutar automatizaciones web y gest
 - `routers/issue_agent.py`: endpoints del agente de issues (`/issue-agent/*`).
 - `agents/discord_agent/service.py`: lector de canales Discord, resúmenes IA y propuestas de tareas en modo solo lectura.
 - `routers/discord_agent.py`: endpoints del agente Discord (`/discord-agent/*`).
+- `agents/telegram_reader/service.py`: lector Telegram alimentado por el fan-out del webhook de Answers, con resúmenes IA y propuestas de tareas en modo solo lectura.
+- `routers/telegram_reader.py`: endpoints del lector Telegram (`/telegram-reader/*`).
+- `runners/intake_local.py`: consola local aislada para revisar Discord y datos Telegram de prueba, sin iniciar el resto de agentes ni tomar el webhook compartido.
 - `routers/auth.py`: utilidades de autenticación compartidas para routers.
 - `routers/ui.py`: UI integrada multiagente (`/ui`).
 - `main.py`: carga configuración, instancia servicios y monta routers.
@@ -113,7 +116,7 @@ Campos obligatorios para que `issue_agent` pueda generar/rellenar issues:
 
 - `DISCORD_ENABLED` (por defecto `false`; debe activarse explícitamente)
 - `DISCORD_BOT_TOKEN` (secreto del bot de Discord)
-- `DISCORD_OPENAI_API_KEY` (clave de OpenAI exclusiva para este agente)
+- `DISCORD_OPENAI_API_KEY` (clave de OpenAI compartida por los lectores de Discord y Telegram)
 - `DISCORD_OPENAI_MODEL` (por defecto `gpt-5-mini`)
 - `DISCORD_CHANNEL_IDS` (CSV en variables de entorno; lista JSON en `options.json`)
 - `DISCORD_POLL_INTERVAL_MINUTES` (por defecto `15`)
@@ -138,10 +141,28 @@ Campos obligatorios con el agente activado:
 - `DISCORD_OPENAI_API_KEY`
 - `DISCORD_CHANNEL_IDS`
 
+### Lector de Telegram (`telegram_reader`)
+
+- `TELEGRAM_READER_ENABLED` (por defecto `false`; debe activarse explícitamente)
+- `TELEGRAM_READER_CHAT_IDS` (CSV en variables de entorno; lista JSON en `options.json`)
+- `TELEGRAM_READER_SUMMARY_MIN_MESSAGES` (por defecto `5`; rango `1`–`100`)
+- `TELEGRAM_READER_RETENTION_DAYS` (por defecto `14`)
+- `DISCORD_OPENAI_API_KEY` y `DISCORD_OPENAI_MODEL` (credencial y modelo compartidos; no existe una segunda clave de OpenAI para Telegram)
+
+En la configuración del add-on, los nombres canónicos equivalentes son `telegram_reader_enabled`, `telegram_reader_chat_ids`, `telegram_reader_summary_min_messages` y `telegram_reader_retention_days`. Mantén cada chat ID como texto, no como número, para no perder precisión. Al activarlo también deben seguir configurados `answers_telegram_bot_token`, `answers_webhook_secret` y `discord_openai_api_key`; `discord_openai_model` conserva el valor por defecto `gpt-5-mini`. Reinicia el add-on después de cambiar cualquiera de esos valores.
+
+El lector reutiliza indirectamente el bot Business de Answers, pero no su servicio de respuesta ni sus operaciones de escritura. El token y el webhook se configuran **una sola vez** en `answers_agent`; el webhook autenticado entrega una copia interna del update a Answers y, cuando `TELEGRAM_READER_ENABLED=true`, al lector. No existe una credencial de bot propia del lector.
+
+El lector no configura webhooks, no hace long polling, no llama a ninguna API de Telegram y no contiene métodos para enviar, editar, borrar o reaccionar a mensajes. Solo admite mensajes entrantes con texto, procedentes de un cliente, en chats privados incluidos en `TELEGRAM_READER_CHAT_IDS`; ignora mensajes salientes del bot, ediciones, grupos, adjuntos y otros tipos de update hasta que exista una ampliación explícita. Al resumir se envía a OpenAI únicamente el texto mínimo y sus IDs de evidencia; el identificador del chat se conserva solo localmente para el enrutamiento. Un fallo al resumir o al contactar OpenAI se aísla del flujo de Answers y no altera la respuesta del bot al usuario. Consulta la documentación oficial de [actualizaciones y webhooks de Telegram](https://core.telegram.org/bots/api#getting-updates).
+
+Al iniciarse con una configuración válida, el lector fija automáticamente un punto de inicio por chat desde ahora. `POST /telegram-reader/baseline` es una operación local e idempotente que permite inicializar o confirmar ese límite de forma manual; no consulta Telegram ni convierte mensajes anteriores en análisis retrospectivo. Solo los mensajes posteriores, recibidos por el webhook compartido y pertenecientes a la lista autorizada, pueden formar resúmenes. Si se desactiva el lector, falta una credencial compartida, o se retira y vuelve a añadir un chat, se descarta el texto pendiente y la siguiente activación crea un límite nuevo para ese chat. Mientras un chat no alcanza el umbral de resumen, el lector conserva de forma temporal el mínimo texto pendiente en `/data/telegram_reader/state.json`; se elimina al resumir o al caducar `TELEGRAM_READER_RETENTION_DAYS`, incluso si después se desactiva el lector, y nunca se devuelve por sus endpoints.
+
+Las tareas se generan únicamente como sugerencias separadas, con evidencia por mensaje, y se revisan de forma humana. Cada tarea puede descartarse localmente como `created`, `duplicate`, `not_actionable` u `other`, o restaurarse mientras se conserve el resumen. El lector nunca crea, envía ni modifica un issue automáticamente.
+
 ### Agente respuestas (`answers_agent`)
 
 - `ANSWERS_DATA_DIR` (por defecto `/data/answers_agent`; persistencia de conversaciones/estado)
-- `ANSWERS_TELEGRAM_BOT_TOKEN` (legacy: `TELEGRAM_BOT_TOKEN`)
+- `ANSWERS_TELEGRAM_BOT_TOKEN` (legacy: `TELEGRAM_BOT_TOKEN`; único token del bot Business y de su entrega webhook compartida con `telegram_reader`)
 - `ANSWERS_OPENAI_API_KEY` (legacy: `OPENAI_API_KEY`)
 - `ANSWERS_OPENAI_MODEL` (legacy: `OPENAI_MODEL`, por defecto `gpt-5-mini`)
 - `ANSWERS_REQUEST_TIMEOUT_SECONDS` (por defecto `30`)
@@ -201,6 +222,23 @@ Modo normal (sin autoreload):
 ```bash
 python -m uvicorn main:APP --host 0.0.0.0 --port 8099 --no-proxy-headers
 ```
+
+### Consola local de intake (Discord y Telegram)
+
+La consola aislada no importa `main.py`, no lee `/data/options.json` y no inicia Workday, Email, Answers ni Issue Agent. Solo construye el lector local de Discord, no inicia un scheduler automático y se enlaza exclusivamente a loopback. Telegram puede aparecer como fuente de revisión si se inyectan datos de prueba, pero la consola no recibe webhooks ni conecta con el bot Business compartido.
+
+```bash
+cp .env.example .env
+# Edita .env con placeholders reales solo en tu Mac local.
+set -a
+source .env
+set +a
+python -m runners.intake_local
+```
+
+Por defecto escucha en `http://127.0.0.1:8098`. Abre `http://127.0.0.1:8098/#<JOB_SECRET>` para que el HTML autentique sus llamadas locales con `X-Job-Secret`: el fragmento no se envía al servidor y se elimina del historial visible al cargar. El antiguo formato `/?secret=<JOB_SECRET>` sigue funcionando de forma transitoria, pero también se limpia inmediatamente; sustitúyelo por el fragmento en tus marcadores. La página de arranque no contiene datos y las operaciones de datos permanecen autenticadas. No reenvíes ni expongas ese puerto; Ingress sigue siendo la vía recomendada para el add-on. La consola ofrece lectura y baseline manual solo para Discord, tarjetas de revisión y un borrador local de Issue: no llama a `issue-agent/submit`, no crea un issue y no publica en Discord o Telegram.
+
+`JOB_SECRET` debe ser un secreto local único, no vacío y distinto de `false`, `none` o `null`. `INTAKE_LOCAL_DATA_DIR`, `INTAKE_LOCAL_HOST` e `INTAKE_LOCAL_PORT` son exclusivamente locales. El runner rechaza cualquier host distinto de loopback y cualquier directorio dentro de las raíces runtime habituales de Home Assistant (`/data`, `/config`, `/share`, `/media`, `/ssl` y `/backup`), para no reutilizar ni modificar el almacenamiento del add-on. No apuntes el bot Business ni su webhook compartido a esta consola: interrumpiría Answers. Una prueba Telegram realmente local requerirá en el futuro un bot de pruebas dedicado y un transporte explícito que se diseñe y apruebe por separado; no debe reutilizar el bot compartido.
 
 ## Endpoints
 
@@ -269,6 +307,18 @@ Control de acceso básico:
 - `DELETE /discord-agent/summaries/{summary_id}/tasks/{task_key}/dismiss`
 
 `POST /discord-agent/poll` permite probar manualmente un ciclo de lectura; para un canal sin punto de inicio, ese ciclo lo establece sin resumir contenido anterior. La UI solo puede trasladar una tarea candidata al formulario de Issues; crear o enviar un issue siempre requiere la revisión manual existente. Los endpoints de descarte solo guardan una decisión local de revisión y siguen requiriendo autenticación incluso si la integración queda desactivada (`JOB_SECRET` en acceso directo).
+
+### Lector de Telegram
+
+- `GET /telegram-reader/status`
+- `POST /telegram-reader/baseline`
+- `POST /telegram-reader/process`
+- `GET /telegram-reader/summaries`
+- `GET /telegram-reader/summaries/{summary_id}`
+- `POST /telegram-reader/summaries/{summary_id}/tasks/{task_key}/dismiss`
+- `DELETE /telegram-reader/summaries/{summary_id}/tasks/{task_key}/dismiss`
+
+`POST /telegram-reader/baseline` inicia el lector desde el momento actual sin consultar Telegram. `POST /telegram-reader/process` procesa mensajes que ya haya recibido el webhook compartido de Answers y que estén pendientes de resumen; tampoco consulta Telegram. Los endpoints no exponen operaciones de escritura de Telegram ni creación automática de Issues; al igual que Discord, el resultado es una sugerencia revisable y un borrador local. Todos requieren autenticación, incluso cuando el lector está desactivado.
 
 Notas:
 

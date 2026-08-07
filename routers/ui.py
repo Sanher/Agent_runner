@@ -2791,6 +2791,218 @@ def create_ui_router(job_secret: str) -> APIRouter:
       word-break: break-word;
     }
 
+    #tabTelegram {
+      gap: 16px;
+    }
+
+    #tabTelegram .telegram-toolbar,
+    #tabTelegram .telegram-summary-head,
+    #tabTelegram .telegram-task-head,
+    #tabTelegram .telegram-task-footer,
+    #tabTelegram .telegram-intake-item {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    #tabTelegram .telegram-toolbar-copy,
+    #tabTelegram .telegram-summary-copy,
+    #tabTelegram .telegram-task-copy,
+    #tabTelegram .telegram-intake-copy {
+      min-width: 0;
+    }
+
+    #tabTelegram .telegram-toolbar h3,
+    #tabTelegram .telegram-summary-title,
+    #tabTelegram .telegram-task-title {
+      margin: 0 0 6px;
+    }
+
+    #tabTelegram .telegram-toolbar p,
+    #tabTelegram .telegram-summary-copy p,
+    #tabTelegram .telegram-task-copy p,
+    #tabTelegram .telegram-intake-copy p {
+      margin: 0;
+    }
+
+    #tabTelegram .telegram-toolbar-actions,
+    #tabTelegram .telegram-status-grid,
+    #tabTelegram .telegram-summary-meta,
+    #tabTelegram .telegram-task-meta,
+    #tabTelegram .telegram-task-list,
+    #tabTelegram .telegram-task-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    #tabTelegram .telegram-toolbar-actions,
+    #tabTelegram .telegram-task-actions {
+      justify-content: flex-end;
+    }
+
+    #tabTelegram .telegram-toolbar-actions {
+      flex: 0 0 auto;
+    }
+
+    #tabTelegram .telegram-toolbar-actions button,
+    #tabTelegram .telegram-task-footer button {
+      margin: 0;
+    }
+
+    #tabTelegram .telegram-status-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    #tabTelegram .telegram-status-card,
+    #tabTelegram .telegram-summary-card,
+    #tabTelegram .telegram-task-card,
+    #tabTelegram .telegram-empty-card {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 18px;
+      background: rgba(8, 8, 12, 0.34);
+      min-width: 0;
+    }
+
+    #tabTelegram .telegram-status-card {
+      padding: 16px;
+    }
+
+    #tabTelegram .telegram-intake-card {
+      grid-column: 1 / -1;
+    }
+
+    #tabTelegram .telegram-intake-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    #tabTelegram .telegram-intake-item {
+      padding: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.018);
+    }
+
+    #tabTelegram .telegram-status-label,
+    #tabTelegram .telegram-section-label,
+    #tabTelegram .telegram-task-confidence {
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    #tabTelegram .telegram-status-value {
+      margin: 6px 0 0;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+
+    #tabTelegram .telegram-status-detail {
+      margin: 8px 0 0;
+    }
+
+    #tabTelegram .telegram-summary-list {
+      display: grid;
+      gap: 14px;
+    }
+
+    #tabTelegram .telegram-summary-card,
+    #tabTelegram .telegram-empty-card {
+      padding: 18px;
+    }
+
+    #tabTelegram .telegram-summary-meta,
+    #tabTelegram .telegram-task-meta,
+    #tabTelegram .telegram-task-evidence {
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    #tabTelegram .telegram-meta-pill {
+      padding: 5px 9px;
+      border: 1px solid rgba(249, 115, 22, 0.18);
+      border-radius: 999px;
+      background: rgba(249, 115, 22, 0.08);
+    }
+
+    #tabTelegram .telegram-summary-body,
+    #tabTelegram .telegram-task-context {
+      margin: 16px 0;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    #tabTelegram .telegram-list-section {
+      margin-top: 14px;
+    }
+
+    #tabTelegram .telegram-list-section h5 {
+      margin: 0 0 8px;
+      font-size: 0.9rem;
+    }
+
+    #tabTelegram .telegram-list-section ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    #tabTelegram .telegram-list-section li {
+      margin: 5px 0;
+      line-height: 1.45;
+    }
+
+    #tabTelegram .telegram-task-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      margin-top: 10px;
+    }
+
+    #tabTelegram .telegram-task-card {
+      padding: 15px;
+    }
+
+    #tabTelegram .telegram-task-title {
+      font-size: 1rem;
+      line-height: 1.35;
+    }
+
+    #tabTelegram .telegram-task-footer {
+      align-items: center;
+      margin-top: 14px;
+    }
+
+    #tabTelegram .telegram-task-actions {
+      align-items: center;
+    }
+
+    #tabTelegram .telegram-task-dismiss-select {
+      min-width: 154px;
+      margin: 0;
+    }
+
+    #tabTelegram .telegram-task-card.is-dismissed {
+      border-color: rgba(255, 255, 255, 0.05);
+      opacity: 0.72;
+    }
+
+    #tabTelegram .telegram-task-dismissed-note {
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    #tabTelegram .telegram-task-evidence {
+      line-height: 1.4;
+      word-break: break-word;
+    }
+
     @keyframes panelFade {
       from {
         opacity: 0;
@@ -2866,7 +3078,12 @@ def create_ui_router(job_secret: str) -> APIRouter:
       #tabDiscord .discord-summary-head,
       #tabDiscord .discord-task-head,
       #tabDiscord .discord-task-footer,
-      #tabDiscord .discord-baseline-item {
+      #tabDiscord .discord-baseline-item,
+      #tabTelegram .telegram-toolbar,
+      #tabTelegram .telegram-summary-head,
+      #tabTelegram .telegram-task-head,
+      #tabTelegram .telegram-task-footer,
+      #tabTelegram .telegram-intake-item {
         flex-direction: column;
         align-items: stretch;
       }
@@ -2874,6 +3091,13 @@ def create_ui_router(job_secret: str) -> APIRouter:
         justify-content: flex-start;
       }
       #tabDiscord .discord-status-grid {
+        grid-template-columns: 1fr;
+      }
+      #tabTelegram .telegram-toolbar-actions,
+      #tabTelegram .telegram-task-actions {
+        justify-content: flex-start;
+      }
+      #tabTelegram .telegram-status-grid {
         grid-template-columns: 1fr;
       }
       #tabAnswers .answers-toolbar-actions {
@@ -2990,6 +3214,14 @@ def create_ui_router(job_secret: str) -> APIRouter:
       #tabDiscord .discord-task-dismiss-select {
         width: 100%;
       }
+      #tabTelegram .telegram-toolbar-actions,
+      #tabTelegram .telegram-toolbar-actions button,
+      #tabTelegram .telegram-task-footer button,
+      #tabTelegram .telegram-task-actions,
+      #tabTelegram .telegram-task-actions button,
+      #tabTelegram .telegram-task-dismiss-select {
+        width: 100%;
+      }
     }
 </style>
 </head>
@@ -3054,6 +3286,16 @@ def create_ui_router(job_secret: str) -> APIRouter:
               <span class="tab-subtitle">Resúmenes de canales y tareas sugeridas</span>
             </span>
             <span id="tabDiscordBadge" class="nav-badge is-hidden" data-variant="neutral"></span>
+          </span>
+        </button>
+        <button id="tabTelegramBtn" class="tab-btn" onclick="showTab('telegram')">
+          <span class="tab-nav">
+            <span class="tab-icon">✈</span>
+            <span class="tab-copy">
+              <span class="tab-title">Telegram</span>
+              <span class="tab-subtitle">Lectura de chats y tareas sugeridas</span>
+            </span>
+            <span id="tabTelegramBadge" class="nav-badge is-hidden" data-variant="neutral"></span>
           </span>
         </button>
       </div>
@@ -3488,6 +3730,44 @@ def create_ui_router(job_secret: str) -> APIRouter:
       <div class=\"card discord-empty-card\"><p class=\"muted\">Cargando resúmenes de Discord...</p></div>
     </div>
   </section>
+
+  <section id=\"tabTelegram\" class=\"tab-panel\">
+    <div class=\"card telegram-toolbar\">
+      <div class=\"telegram-toolbar-copy\">
+        <p class=\"telegram-section-label\">Lectura desde Answers</p>
+        <h3>Resúmenes de Telegram</h3>
+        <p class=\"muted\">Las actualizaciones llegan a través del webhook existente de Answers. El lector analiza solo los chats autorizados y nunca envía, edita, elimina mensajes ni añade reacciones en Telegram.</p>
+      </div>
+      <div class=\"telegram-toolbar-actions\">
+        <button id=\"telegramProcessBtn\" onclick=\"processTelegramPending()\" disabled>Procesar pendientes</button>
+        <button id=\"telegramDismissedToggleBtn\" onclick=\"toggleTelegramDismissedTasks()\" class=\"ghost-btn\" aria-pressed=\"false\">Mostrar descartadas</button>
+        <button onclick=\"loadTelegramPanel()\" class=\"ghost-btn\">Actualizar</button>
+      </div>
+    </div>
+
+    <div class=\"telegram-status-grid\">
+      <div class=\"card telegram-status-card\">
+        <div class=\"telegram-status-label\">Estado</div>
+        <div id=\"telegramStatusLine\" class=\"telegram-status-value\" role=\"status\" aria-live=\"polite\">Cargando estado de Telegram...</div>
+        <p id=\"telegramStatusDetail\" class=\"muted telegram-status-detail\"></p>
+      </div>
+      <div class=\"card telegram-status-card\">
+        <div class=\"telegram-status-label\">Resumen</div>
+        <div id=\"telegramSummaryStatus\" class=\"telegram-status-value\">Cargando resúmenes...</div>
+        <p class=\"muted telegram-status-detail\">Procesa únicamente mensajes que el webhook ya haya guardado localmente. Las tareas requieren revisión humana antes de preparar un borrador de issue.</p>
+      </div>
+      <div class=\"card telegram-status-card telegram-intake-card\">
+        <div class=\"telegram-status-label\">Entrada webhook</div>
+        <div id=\"telegramIntakeList\" class=\"telegram-intake-list\" aria-live=\"polite\">
+          <p class=\"muted\">Cargando el estado de los chats autorizados...</p>
+        </div>
+      </div>
+    </div>
+
+    <div id=\"telegramSummaryList\" class=\"telegram-summary-list\" aria-live=\"polite\">
+      <div class=\"card telegram-empty-card\"><p class=\"muted\">Cargando resúmenes de Telegram...</p></div>
+    </div>
+  </section>
       </div>
 
       </main>
@@ -3545,6 +3825,7 @@ const workdayBase = rootBase;
 const issueBase = `${rootBase}/issue-agent`;
 const answersBase = `${rootBase}/answers-agent`;
 const discordBase = `${rootBase}/discord-agent`;
+const telegramBase = `${rootBase}/telegram-reader`;
 const apiSecret = new URLSearchParams(window.location.search).get('secret') || '';
 const statusEl = document.getElementById('status');
 let currentSuggestionId = '';
@@ -3560,6 +3841,8 @@ let workdaySavedReducedEndDate = '';
 let answersArchivedVisible = false;
 let discordShowDismissedTasks = false;
 let discordLatestSummaries = [];
+let telegramShowDismissedTasks = false;
+let telegramLatestSummaries = [];
 let emailReviewedVisible = false;
 let statusDismissTimer = null;
 let issuePlaywrightLogLines = [];
@@ -3605,6 +3888,13 @@ function withAnswersSecret(path) {
 
 function withDiscordSecret(path) {
   const fullPath = `${discordBase}${path}`;
+  if (!apiSecret) return fullPath;
+  const join = fullPath.includes('?') ? '&' : '?';
+  return `${fullPath}${join}secret=${encodeURIComponent(apiSecret)}`;
+}
+
+function withTelegramSecret(path) {
+  const fullPath = `${telegramBase}${path}`;
   if (!apiSecret) return fullPath;
   const join = fullPath.includes('?') ? '&' : '?';
   return `${fullPath}${join}secret=${encodeURIComponent(apiSecret)}`;
@@ -3711,6 +4001,10 @@ const TAB_META = {
   discord: {
     title: 'Discord',
     subtitle: 'Resúmenes de canales autorizados y tareas sugeridas para revisión.'
+  },
+  telegram: {
+    title: 'Telegram',
+    subtitle: 'Resúmenes de chats autorizados recibidos mediante el webhook de Answers.'
   }
 };
 
@@ -3755,6 +4049,10 @@ async function refreshActivePanel() {
   }
   if (activeTab === 'discord') {
     await loadDiscordPanel();
+    return;
+  }
+  if (activeTab === 'telegram') {
+    await loadTelegramPanel();
   }
 }
 
@@ -3765,17 +4063,20 @@ function showTab(name) {
   const isIssue = name === 'issue';
   const isAnswers = name === 'answers';
   const isDiscord = name === 'discord';
+  const isTelegram = name === 'telegram';
   updateTopbar(name);
   document.getElementById('tabWorkday').classList.toggle('active', isWorkday);
   document.getElementById('tabEmail').classList.toggle('active', isEmail);
   document.getElementById('tabIssue').classList.toggle('active', isIssue);
   document.getElementById('tabAnswers').classList.toggle('active', isAnswers);
   document.getElementById('tabDiscord').classList.toggle('active', isDiscord);
+  document.getElementById('tabTelegram').classList.toggle('active', isTelegram);
   document.getElementById('tabWorkdayBtn').classList.toggle('active', isWorkday);
   document.getElementById('tabEmailBtn').classList.toggle('active', isEmail);
   document.getElementById('tabIssueBtn').classList.toggle('active', isIssue);
   document.getElementById('tabAnswersBtn').classList.toggle('active', isAnswers);
   document.getElementById('tabDiscordBtn').classList.toggle('active', isDiscord);
+  document.getElementById('tabTelegramBtn').classList.toggle('active', isTelegram);
   if (isWorkday) {
     refreshWorkdayPanel();
     loadWorkdaySettings();
@@ -3788,6 +4089,8 @@ function showTab(name) {
     loadAnswersChats();
   } else if (isDiscord) {
     loadDiscordPanel();
+  } else if (isTelegram) {
+    loadTelegramPanel();
   }
 }
 
@@ -6144,6 +6447,632 @@ async function pollDiscordNow() {
   }
 }
 
+function telegramText(value, fallback = '') {
+  if (value === null || value === undefined) return fallback;
+  const text = String(value).trim();
+  return text || fallback;
+}
+
+function telegramStringList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => telegramText(item)).filter(Boolean);
+}
+
+function telegramApiError(payload, fallback) {
+  const candidates = [payload?.detail, payload?.message, payload?.error, payload?.reason];
+  for (const candidate of candidates) {
+    const text = telegramText(candidate);
+    if (text && text !== '[object Object]') return text;
+  }
+  return fallback;
+}
+
+function telegramConfigurationComplete(status) {
+  const configFlags = ['configured', 'configuration_complete', 'config_complete', 'config_valid'];
+  if (configFlags.some((key) => Object.prototype.hasOwnProperty.call(status || {}, key) && status[key] === false)) {
+    return false;
+  }
+  return !Array.isArray(status?.missing_required_config) || status.missing_required_config.length === 0;
+}
+
+function telegramConfiguredChats(status) {
+  if (!Array.isArray(status?.chats)) return [];
+  return status.chats
+    .filter((chat) => chat && typeof chat === 'object')
+    .map((chat) => ({...chat, chat_id: telegramText(chat.chat_id || chat.id)}))
+    .filter((chat) => chat.chat_id);
+}
+
+function createTelegramElement(tagName, className, text) {
+  const element = document.createElement(tagName);
+  if (className) element.className = className;
+  if (text !== undefined && text !== null) element.textContent = String(text);
+  return element;
+}
+
+function createTelegramMetaPill(text) {
+  return createTelegramElement('span', 'telegram-meta-pill', text);
+}
+
+function renderTelegramIntakeStatus(status, controlsEnabled) {
+  const list = document.getElementById('telegramIntakeList');
+  if (!list) return;
+  const chats = telegramConfiguredChats(status);
+  list.replaceChildren();
+
+  if (!chats.length) {
+    list.appendChild(createTelegramElement(
+      'p',
+      'muted',
+      controlsEnabled
+        ? 'No se han recibido chats autorizados en el estado local.'
+        : 'Completa y activa la configuración de Telegram para ver los chats autorizados.'
+    ));
+    return;
+  }
+
+  chats.forEach((chat) => {
+    const pendingCount = Math.max(0, Number(chat?.pending_message_count || 0));
+    const initialized = telegramText(chat?.baseline_status).toLowerCase() === 'initialized';
+    const baselineAt = telegramText(chat?.baseline_at);
+    const item = createTelegramElement('div', 'telegram-intake-item');
+    const copy = createTelegramElement('div', 'telegram-intake-copy');
+    copy.appendChild(createTelegramElement('strong', '', 'Chat ' + chat.chat_id));
+    const baselineDetail = initialized
+      ? baselineAt
+        ? 'La entrada local está activa desde ' + formatTs(baselineAt) + '.'
+        : 'La entrada local está activa para las actualizaciones recibidas por el webhook.'
+      : 'La entrada local se activará con la siguiente actualización recibida por el webhook.';
+    const pendingDetail = pendingCount
+      ? pendingCount + ' ' + (pendingCount === 1 ? 'mensaje está pendiente' : 'mensajes están pendientes') + ' de procesar.'
+      : 'No hay mensajes pendientes de procesar.';
+    copy.appendChild(createTelegramElement('p', 'muted', baselineDetail + ' ' + pendingDetail));
+    item.appendChild(copy);
+    item.appendChild(createTelegramMetaPill(
+      pendingCount === 1 ? '1 pendiente' : pendingCount + ' pendientes'
+    ));
+    list.appendChild(item);
+  });
+}
+
+function renderTelegramStatus(status) {
+  const line = document.getElementById('telegramStatusLine');
+  const detail = document.getElementById('telegramStatusDetail');
+  const processButton = document.getElementById('telegramProcessBtn');
+  if (!line || !detail || !processButton) return;
+
+  const enabled = status?.enabled !== false;
+  const configured = telegramConfigurationComplete(status);
+  const serviceOk = status?.ok !== false;
+  const message = telegramApiError(status, 'Sin información adicional.');
+
+  if (!enabled) {
+    line.innerText = 'Telegram está desactivado.';
+    detail.innerText = message === 'Sin información adicional.'
+      ? 'Activa la integración y completa su configuración para recibir actualizaciones mediante el webhook de Answers.'
+      : message;
+    setSidebarBadge('tabTelegramBadge', 'Desactivado', 'warning');
+  } else if (!configured) {
+    line.innerText = 'La configuración de Telegram está incompleta.';
+    detail.innerText = message === 'Sin información adicional.'
+      ? 'Añade la clave de IA compartida y al menos un chat autorizado en la configuración del add-on.'
+      : message;
+    setSidebarBadge('tabTelegramBadge', 'Configurar', 'warning');
+  } else if (!serviceOk) {
+    line.innerText = 'Telegram requiere atención.';
+    detail.innerText = message;
+    setSidebarBadge('tabTelegramBadge', 'Error', 'danger');
+  } else {
+    line.innerText = 'Telegram está listo para procesar.';
+    detail.innerText = message !== 'Sin información adicional.'
+      ? message
+      : 'Las actualizaciones llegan a través del webhook de Answers; el lector no realiza ninguna acción en Telegram.';
+    setSidebarBadge('tabTelegramBadge', 'Listo', 'success');
+  }
+
+  const controlsEnabled = enabled && configured && serviceOk;
+  processButton.disabled = !controlsEnabled;
+  processButton.title = processButton.disabled
+    ? 'Completa y activa la configuración de Telegram antes de procesar los mensajes ya almacenados.'
+    : 'Procesa únicamente los mensajes que el webhook ya haya almacenado localmente.';
+  renderTelegramIntakeStatus(status, controlsEnabled);
+}
+
+function renderTelegramStatusError(error) {
+  const line = document.getElementById('telegramStatusLine');
+  const detail = document.getElementById('telegramStatusDetail');
+  const processButton = document.getElementById('telegramProcessBtn');
+  if (line) line.innerText = 'No se pudo cargar el estado de Telegram.';
+  if (detail) detail.innerText = 'Error: ' + telegramText(error, 'sin detalle');
+  if (processButton) processButton.disabled = true;
+  const intakeList = document.getElementById('telegramIntakeList');
+  if (intakeList) {
+    intakeList.replaceChildren(createTelegramElement(
+      'p',
+      'muted',
+      'No se pudo cargar el estado de los chats autorizados.'
+    ));
+  }
+  setSidebarBadge('tabTelegramBadge', 'Error', 'danger');
+}
+
+function telegramSummaryId(summary) {
+  return telegramText(summary?.summary_id || summary?.id);
+}
+
+function telegramTaskKey(task) {
+  return telegramText(task?.task_key || task?.key);
+}
+
+function telegramTaskDismissal(task) {
+  const review = task?.review && typeof task.review === 'object' ? task.review : {};
+  const dismissed = task?.dismissed === true || review?.dismissed === true || task?.status === 'dismissed';
+  return {
+    dismissed,
+    reason: telegramText(task?.dismissed_reason || review?.dismissed_reason || review?.reason),
+  };
+}
+
+function telegramDismissReasonLabel(reason) {
+  const labels = {
+    created: 'Creada',
+    duplicate: 'Duplicada',
+    not_actionable: 'No es una incidencia',
+    other: 'Otro motivo',
+  };
+  return labels[telegramText(reason).toLowerCase()] || 'Sin motivo indicado';
+}
+
+function telegramTaskDismissPath(task, summary) {
+  const summaryId = telegramSummaryId(summary);
+  const taskKey = telegramTaskKey(task);
+  if (!summaryId || !taskKey) return '';
+  return '/summaries/' + encodeURIComponent(summaryId)
+    + '/tasks/' + encodeURIComponent(taskKey) + '/dismiss';
+}
+
+async function dismissTelegramTask(task, summary, reason, button, reasonSelect) {
+  const endpoint = telegramTaskDismissPath(task, summary);
+  if (!endpoint) {
+    setStatus('No se puede descartar esta tarea porque falta su identificador persistente. Actualiza los resúmenes e inténtalo de nuevo.');
+    return;
+  }
+  const normalizedReason = telegramText(reason, 'other').toLowerCase();
+  const originalText = button?.innerText || 'Descartar';
+  if (button) {
+    button.disabled = true;
+    button.innerText = 'Descartando...';
+  }
+  if (reasonSelect) reasonSelect.disabled = true;
+  try {
+    const response = await fetch(withTelegramSecret(endpoint), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({reason: normalizedReason}),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || data?.ok === false) {
+      throw new Error(telegramApiError(data, 'HTTP ' + response.status));
+    }
+    const persistedReason = telegramText(data?.result?.dismissed_reason, normalizedReason);
+    setStatus('Tarea de Telegram descartada: ' + telegramDismissReasonLabel(persistedReason) + '.');
+  } catch (error) {
+    setStatus('Error al descartar la tarea de Telegram: ' + telegramText(error, 'sin detalle'));
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerText = originalText;
+    }
+    if (reasonSelect) reasonSelect.disabled = false;
+    await loadTelegramSummaries();
+  }
+}
+
+async function restoreTelegramTask(task, summary, button) {
+  const endpoint = telegramTaskDismissPath(task, summary);
+  if (!endpoint) {
+    setStatus('No se puede restaurar esta tarea porque falta su identificador persistente. Actualiza los resúmenes e inténtalo de nuevo.');
+    return;
+  }
+  const originalText = button?.innerText || 'Restaurar';
+  if (button) {
+    button.disabled = true;
+    button.innerText = 'Restaurando...';
+  }
+  try {
+    const response = await fetch(withTelegramSecret(endpoint), {method: 'DELETE'});
+    const data = await readApiPayload(response);
+    if (!response.ok || data?.ok === false) {
+      throw new Error(telegramApiError(data, 'HTTP ' + response.status));
+    }
+    setStatus('Tarea de Telegram restaurada para revisión.');
+  } catch (error) {
+    setStatus('Error al restaurar la tarea de Telegram: ' + telegramText(error, 'sin detalle'));
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerText = originalText;
+    }
+    await loadTelegramSummaries();
+  }
+}
+
+function appendTelegramListSection(parent, title, values, emptyText) {
+  const section = createTelegramElement('section', 'telegram-list-section');
+  section.appendChild(createTelegramElement('h5', '', title));
+  const items = telegramStringList(values);
+  if (!items.length) {
+    section.appendChild(createTelegramElement('p', 'muted', emptyText));
+    parent.appendChild(section);
+    return;
+  }
+  const list = document.createElement('ul');
+  items.forEach((item) => list.appendChild(createTelegramElement('li', '', item)));
+  section.appendChild(list);
+  parent.appendChild(section);
+}
+
+function setTelegramIssueSelectValue(id, value) {
+  const control = document.getElementById(id);
+  const desired = telegramText(value);
+  if (!control || !desired) return;
+  const option = Array.from(control.options || []).find((item) => item.value === desired);
+  if (option) control.value = option.value;
+}
+
+function transferTelegramTaskToIssues(task, summary) {
+  const issueInput = document.getElementById('issueUserInput');
+  if (!issueInput) {
+    setStatus('Error: no se encontró el formulario de Issues.');
+    return;
+  }
+
+  const title = telegramText(task?.title, 'Tarea propuesta desde Telegram');
+  const context = telegramText(task?.context, 'No se proporcionó contexto adicional.');
+  const sourceSummary = telegramText(summary?.summary);
+  const evidenceIds = telegramStringList(task?.evidence_message_ids);
+  const lines = [
+    'Título sugerido: ' + title,
+    '',
+    'Contexto extraído de Telegram:',
+    context,
+  ];
+  if (sourceSummary) {
+    lines.push('', 'Resumen de origen:', sourceSummary);
+  }
+  if (evidenceIds.length) {
+    lines.push('', 'IDs de mensajes de evidencia: ' + evidenceIds.join(', '));
+  }
+
+  issueInput.value = lines.join('\\n');
+  setTelegramIssueSelectValue('issueIssueType', task?.issue_type || 'task');
+  setTelegramIssueSelectValue('issueRepo', task?.repo || 'backend');
+  setTelegramIssueSelectValue('issueUnit', task?.unit || 'core');
+
+  const issueStatus = document.getElementById('issueGenerateStatus');
+  if (issueStatus) {
+    issueStatus.innerText = currentIssue
+      ? 'Contexto de Telegram cargado. El borrador actual sigue sin cambios; revísalo antes de generar otro.'
+      : 'Contexto de Telegram cargado. Revisa los campos y genera un borrador cuando estés listo.';
+  }
+  showTab('issue');
+  issueInput.focus();
+  setStatus('Tarea de Telegram preparada en Issues; no se ha creado ningún issue.');
+}
+
+function renderTelegramTask(task, summary) {
+  const card = createTelegramElement('article', 'telegram-task-card');
+  const dismissal = telegramTaskDismissal(task);
+  if (dismissal.dismissed) card.classList.add('is-dismissed');
+  const head = createTelegramElement('div', 'telegram-task-head');
+  const copy = createTelegramElement('div', 'telegram-task-copy');
+  copy.appendChild(createTelegramElement('h5', 'telegram-task-title', telegramText(task?.title, 'Tarea sin título')));
+  const confidence = telegramText(task?.confidence, 'sin indicar');
+  const confidenceLabel = createTelegramElement('span', 'telegram-task-confidence', 'Confianza: ' + confidence);
+  head.append(copy, confidenceLabel);
+  card.appendChild(head);
+
+  card.appendChild(createTelegramElement(
+    'p',
+    'telegram-task-context',
+    telegramText(task?.context, 'No se proporcionó contexto para esta tarea.')
+  ));
+
+  const meta = createTelegramElement('div', 'telegram-task-meta');
+  [
+    'Tipo: ' + telegramText(task?.issue_type, 'task'),
+    'Repositorio: ' + telegramText(task?.repo, 'backend'),
+    'Unidad: ' + telegramText(task?.unit, 'core'),
+  ].forEach((value) => meta.appendChild(createTelegramMetaPill(value)));
+  card.appendChild(meta);
+
+  const footer = createTelegramElement('div', 'telegram-task-footer');
+  const evidenceIds = telegramStringList(task?.evidence_message_ids);
+  footer.appendChild(createTelegramElement(
+    'span',
+    'telegram-task-evidence',
+    evidenceIds.length ? 'Evidencia: ' + evidenceIds.join(', ') : 'Sin IDs de evidencia disponibles.'
+  ));
+  const actions = createTelegramElement('div', 'telegram-task-actions');
+  if (dismissal.dismissed) {
+    card.appendChild(createTelegramElement(
+      'p',
+      'telegram-task-dismissed-note',
+      'Descartada: ' + telegramDismissReasonLabel(dismissal.reason) + '.'
+    ));
+    const restoreButton = createTelegramElement('button', 'ghost-btn', 'Restaurar');
+    restoreButton.type = 'button';
+    restoreButton.addEventListener('click', () => restoreTelegramTask(task, summary, restoreButton));
+    actions.appendChild(restoreButton);
+  } else {
+    const transferButton = createTelegramElement('button', '', 'Llevar a Issues');
+    transferButton.type = 'button';
+    transferButton.addEventListener('click', () => transferTelegramTaskToIssues(task, summary));
+    actions.appendChild(transferButton);
+
+    const taskDismissPath = telegramTaskDismissPath(task, summary);
+    const dismissReason = document.createElement('select');
+    dismissReason.className = 'telegram-task-dismiss-select';
+    dismissReason.setAttribute('aria-label', 'Motivo para descartar la tarea');
+    dismissReason.disabled = !taskDismissPath;
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Elige un motivo';
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    dismissReason.appendChild(placeholder);
+    [
+      ['created', 'Creada'],
+      ['duplicate', 'Duplicada'],
+      ['not_actionable', 'No es una incidencia'],
+      ['other', 'Otro motivo'],
+    ].forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      dismissReason.appendChild(option);
+    });
+    actions.appendChild(dismissReason);
+
+    const dismissButton = createTelegramElement('button', 'ghost-btn', 'Descartar');
+    dismissButton.type = 'button';
+    const updateDismissButton = () => {
+      const hasPersistentKey = Boolean(taskDismissPath);
+      const hasReason = Boolean(telegramText(dismissReason.value));
+      dismissButton.disabled = !hasPersistentKey || !hasReason;
+      dismissButton.title = !hasPersistentKey
+        ? 'Falta el identificador persistente de esta tarea. Actualiza los resúmenes para descartarla.'
+        : !hasReason
+          ? 'Elige un motivo antes de descartar la tarea.'
+          : 'Oculta esta tarea de la revisión activa y guarda el motivo.';
+    };
+    dismissReason.addEventListener('change', updateDismissButton);
+    updateDismissButton();
+    dismissButton.addEventListener('click', () => {
+      dismissTelegramTask(task, summary, dismissReason.value, dismissButton, dismissReason);
+    });
+    actions.appendChild(dismissButton);
+  }
+  footer.appendChild(actions);
+  card.appendChild(footer);
+  return card;
+}
+
+function updateTelegramDismissedToggle(dismissedTaskCount) {
+  const button = document.getElementById('telegramDismissedToggleBtn');
+  if (!button) return;
+  const hasDismissedTasks = dismissedTaskCount > 0;
+  button.disabled = !hasDismissedTasks;
+  button.setAttribute('aria-pressed', telegramShowDismissedTasks ? 'true' : 'false');
+  button.innerText = telegramShowDismissedTasks ? 'Ocultar descartadas' : 'Mostrar descartadas';
+  button.title = hasDismissedTasks
+    ? 'Muestra u oculta las tareas descartadas para poder restaurarlas.'
+    : 'No hay tareas descartadas.';
+}
+
+function toggleTelegramDismissedTasks() {
+  if (!telegramLatestSummaries.length) return;
+  const dismissedTaskCount = telegramLatestSummaries.reduce((total, summary) => {
+    const tasks = Array.isArray(summary?.suggested_tasks) ? summary.suggested_tasks : [];
+    return total + tasks.filter((task) => telegramTaskDismissal(task).dismissed).length;
+  }, 0);
+  if (!dismissedTaskCount) return;
+  telegramShowDismissedTasks = !telegramShowDismissedTasks;
+  renderTelegramSummaries(telegramLatestSummaries);
+}
+
+function renderTelegramSummaries(items) {
+  const list = document.getElementById('telegramSummaryList');
+  const summaryStatus = document.getElementById('telegramSummaryStatus');
+  if (!list || !summaryStatus) return;
+
+  const summaries = Array.isArray(items) ? items : [];
+  telegramLatestSummaries = summaries;
+  const dismissedTaskCount = summaries.reduce((total, summary) => {
+    const tasks = Array.isArray(summary?.suggested_tasks) ? summary.suggested_tasks : [];
+    return total + tasks.filter((task) => telegramTaskDismissal(task).dismissed).length;
+  }, 0);
+  if (!dismissedTaskCount) telegramShowDismissedTasks = false;
+  updateTelegramDismissedToggle(dismissedTaskCount);
+  list.replaceChildren();
+  summaryStatus.innerText = summaries.length
+    ? summaries.length + ' ' + (summaries.length === 1 ? 'resumen disponible.' : 'resúmenes disponibles.')
+    : 'No hay resúmenes disponibles.';
+
+  if (!summaries.length) {
+    const empty = createTelegramElement('div', 'card telegram-empty-card');
+    empty.appendChild(createTelegramElement(
+      'p',
+      'muted',
+      'Aún no hay resúmenes. Cuando lleguen mensajes autorizados mediante el webhook de Answers, usa “Procesar pendientes” para analizar los que ya estén almacenados localmente.'
+    ));
+    list.appendChild(empty);
+    return;
+  }
+
+  summaries.forEach((summary) => {
+    const card = createTelegramElement('article', 'card telegram-summary-card');
+    const head = createTelegramElement('div', 'telegram-summary-head');
+    const copy = createTelegramElement('div', 'telegram-summary-copy');
+    copy.appendChild(createTelegramElement('h4', 'telegram-summary-title', 'Resumen de ' + formatTs(summary?.created_at)));
+    const chatIds = telegramStringList(summary?.chat_ids);
+    const summaryChatId = telegramText(summary?.chat_id);
+    const chatLabel = chatIds.length
+      ? 'Chats: ' + chatIds.join(', ')
+      : summaryChatId
+        ? 'Chat: ' + summaryChatId
+        : 'Chat no indicado.';
+    copy.appendChild(createTelegramElement('p', 'muted', chatLabel));
+    const tasks = Array.isArray(summary?.suggested_tasks) ? summary.suggested_tasks : [];
+    const visibleTasks = telegramShowDismissedTasks
+      ? tasks
+      : tasks.filter((task) => !telegramTaskDismissal(task).dismissed);
+    const summaryDismissedTaskCount = tasks.filter(
+      (task) => telegramTaskDismissal(task).dismissed
+    ).length;
+    const meta = createTelegramElement('div', 'telegram-summary-meta');
+    meta.appendChild(createTelegramMetaPill(Number(summary?.message_count || 0) + ' mensajes'));
+    meta.appendChild(createTelegramMetaPill(tasks.length + ' tareas sugeridas'));
+    if (summaryDismissedTaskCount) {
+      meta.appendChild(createTelegramMetaPill(summaryDismissedTaskCount + ' descartadas'));
+    }
+    if (summary?.collection_scope === 'since_webhook_baseline') {
+      meta.appendChild(createTelegramMetaPill('Desde la activación del webhook'));
+    }
+    if (summary?.collection_scope === 'since_previous_summary') {
+      meta.appendChild(createTelegramMetaPill('Desde el resumen anterior'));
+    }
+    if (summary?.backlog_truncated) {
+      meta.appendChild(createTelegramMetaPill('Lote pendiente recortado'));
+    }
+    head.append(copy, meta);
+    card.appendChild(head);
+    card.appendChild(createTelegramElement(
+      'p',
+      'telegram-summary-body',
+      telegramText(summary?.summary, 'No se proporcionó texto de resumen.')
+    ));
+    if (summary?.backlog_truncated) {
+      card.appendChild(createTelegramElement(
+        'p',
+        'muted',
+        'La entrada pendiente superaba la ventana segura de análisis local; este resumen cubre los mensajes más recientes almacenados.'
+      ));
+    }
+    appendTelegramListSection(card, 'Decisiones', summary?.decisions, 'No se registraron decisiones.');
+    appendTelegramListSection(card, 'Bloqueos', summary?.blockers, 'No se registraron bloqueos.');
+
+    const tasksSection = createTelegramElement('section', 'telegram-list-section');
+    tasksSection.appendChild(createTelegramElement('h5', '', 'Tareas sugeridas'));
+    if (!tasks.length) {
+      tasksSection.appendChild(createTelegramElement('p', 'muted', 'No hay tareas propuestas en este resumen.'));
+    } else if (!visibleTasks.length) {
+      tasksSection.appendChild(createTelegramElement(
+        'p',
+        'muted',
+        'Todas las tareas de este resumen se han descartado. Usa “Mostrar descartadas” para revisarlas o restaurarlas.'
+      ));
+    } else {
+      const taskList = createTelegramElement('div', 'telegram-task-list');
+      // El contenido de Telegram no es fiable: solo se muestra para revisión humana.
+      visibleTasks.forEach((task) => taskList.appendChild(renderTelegramTask(task, summary)));
+      tasksSection.appendChild(taskList);
+    }
+    card.appendChild(tasksSection);
+    list.appendChild(card);
+  });
+}
+
+function renderTelegramSummariesError(error) {
+  const list = document.getElementById('telegramSummaryList');
+  const summaryStatus = document.getElementById('telegramSummaryStatus');
+  if (summaryStatus) summaryStatus.innerText = 'No se pudieron cargar los resúmenes.';
+  if (!list) return;
+  list.replaceChildren();
+  const empty = createTelegramElement('div', 'card telegram-empty-card');
+  empty.appendChild(createTelegramElement(
+    'p',
+    'muted',
+    'Error al cargar los resúmenes de Telegram: ' + telegramText(error, 'sin detalle')
+  ));
+  list.appendChild(empty);
+}
+
+async function loadTelegramStatus() {
+  try {
+    const response = await fetch(withTelegramSecret('/status'));
+    const data = await readApiPayload(response);
+    if (!response.ok || data?.ok === false) {
+      throw new Error(telegramApiError(data, 'HTTP ' + response.status));
+    }
+    renderTelegramStatus(data);
+  } catch (error) {
+    renderTelegramStatusError(error);
+  }
+}
+
+async function loadTelegramSummaries() {
+  try {
+    const response = await fetch(withTelegramSecret('/summaries'));
+    const data = await readApiPayload(response);
+    if (!response.ok || data?.ok === false) {
+      throw new Error(telegramApiError(data, 'HTTP ' + response.status));
+    }
+    renderTelegramSummaries(data?.items);
+  } catch (error) {
+    renderTelegramSummariesError(error);
+  }
+}
+
+async function loadTelegramPanel() {
+  await Promise.all([loadTelegramStatus(), loadTelegramSummaries()]);
+}
+
+async function processTelegramPending() {
+  const button = document.getElementById('telegramProcessBtn');
+  if (!button || button.disabled) return;
+  const originalText = button.innerText;
+  button.disabled = true;
+  button.innerText = 'Procesando...';
+  try {
+    const response = await fetch(withTelegramSecret('/process'), {method: 'POST'});
+    const data = await readApiPayload(response);
+    if (!response.ok) {
+      throw new Error(telegramApiError(data, 'HTTP ' + response.status));
+    }
+    const result = data?.result || {};
+    const errors = Array.isArray(result?.errors) ? result.errors : [];
+    const warnings = Array.isArray(result?.warnings) ? result.warnings : [];
+    const summaryCount = Math.max(0, Number(result?.summary_count ?? result?.summaries_created ?? 0));
+    if (data?.ok === false || errors.length) {
+      const detail = telegramText(errors[0]?.error || errors[0]?.message);
+      setStatus(
+        detail
+          ? 'Procesamiento local de Telegram completado con incidencias: ' + detail
+          : 'Procesamiento local de Telegram completado con incidencias. Revisa el estado del agente.'
+      );
+    } else if (warnings.length) {
+      const detail = telegramText(warnings[0]?.message || warnings[0]?.error);
+      setStatus(
+        detail
+          ? 'Procesamiento local de Telegram completado con aviso: ' + detail
+          : 'Procesamiento local de Telegram completado con avisos. Revisa los resúmenes.'
+      );
+    } else if (summaryCount) {
+      setStatus(summaryCount + ' ' + (
+        summaryCount === 1 ? 'resumen de Telegram creado' : 'resúmenes de Telegram creados'
+      ) + ' para revisión.');
+    } else {
+      setStatus('No hay suficientes mensajes locales pendientes para crear un resumen de Telegram.');
+    }
+  } catch (error) {
+    setStatus('Error al procesar los mensajes locales de Telegram: ' + telegramText(error, 'sin detalle'));
+  } finally {
+    button.innerText = originalText;
+    await loadTelegramPanel();
+  }
+}
+
 function answersReplyAreaId(chatId) {
   return `answers-reply-${safeDomId(chatId)}`;
 }
@@ -6743,6 +7672,7 @@ workdayPollTimer = setInterval(() => {
   if (activeTab === 'issue') refreshIssuePanel();
   if (activeTab === 'answers') loadAnswersChats();
   if (activeTab === 'discord') loadDiscordPanel();
+  if (activeTab === 'telegram') loadTelegramPanel();
 }, 10000);
 </script>
 </body>
